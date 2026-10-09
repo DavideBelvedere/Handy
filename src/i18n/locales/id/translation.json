@@ -590,6 +590,18 @@
         "remove": "Hapus {{word}}",
         "duplicate": "\"{{word}}\" sudah ada"
       },
+      "wordReplacements": {
+        "title": "Word Replacements",
+        "description": "Always replace a word or phrase with another — exact and case-insensitive, no fuzzy guessing. Leave the replacement blank to remove a word.",
+        "fromPlaceholder": "github",
+        "toPlaceholder": "GitHub",
+        "fromLabel": "Word to find",
+        "toLabel": "Replace with",
+        "add": "Add",
+        "remove": "Remove replacement {{from}} to {{to}}",
+        "emptyTarget": "(removed)",
+        "duplicate": "A replacement for \"{{word}}\" already exists"
+      },
       "voiceActivityDetection": {
         "title": "Deteksi Aktivitas Suara",
         "description": "Saring keheningan dari rekaman. Model yang mendukung streaming menggunakan ekor VAD yang lebih panjang; menonaktifkan VAD akan merekam audio mentah."

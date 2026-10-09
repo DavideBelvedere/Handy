@@ -590,6 +590,18 @@
         "remove": "Fjern {{word}}",
         "duplicate": "\"{{word}}\" findes allerede"
       },
+      "wordReplacements": {
+        "title": "Word Replacements",
+        "description": "Always replace a word or phrase with another — exact and case-insensitive, no fuzzy guessing. Leave the replacement blank to remove a word.",
+        "fromPlaceholder": "github",
+        "toPlaceholder": "GitHub",
+        "fromLabel": "Word to find",
+        "toLabel": "Replace with",
+        "add": "Add",
+        "remove": "Remove replacement {{from}} to {{to}}",
+        "emptyTarget": "(removed)",
+        "duplicate": "A replacement for \"{{word}}\" already exists"
+      },
       "voiceActivityDetection": {
         "title": "Stemmeaktivitetsdetektion",
         "description": "Filtrer stilhed fra optagelser. Streaming-modeller bruger en længere VAD-hale; deaktivering af VAD optager rå lyd."

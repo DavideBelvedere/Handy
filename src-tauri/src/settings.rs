@@ -106,6 +106,19 @@ pub enum PostProcessApiFormat {
     Anthropic,
 }
 
+/// A deterministic find-and-replace rule applied to the final transcript:
+/// an exact, case-insensitive substitution of `from` with `to`, unlike the
+/// fuzzy `custom_words`.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct WordReplacement {
+    pub from: String,
+    pub to: String,
+    /// True when auto-learn added this pair, false for manual UI entries.
+    /// Defaulted so replacements stored before this field existed still load.
+    #[serde(default)]
+    pub learned: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -464,6 +477,8 @@ pub struct AppSettings {
     pub log_level: LogLevel,
     #[serde(default)]
     pub custom_words: Vec<String>,
+    #[serde(default)]
+    pub word_replacements: Vec<WordReplacement>,
     #[serde(default)]
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
@@ -1058,6 +1073,7 @@ pub fn get_default_settings() -> AppSettings {
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
+        word_replacements: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
@@ -1466,6 +1482,14 @@ pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_replacement_stored_without_learned_flag_loads_as_manual() {
+        let replacement: WordReplacement =
+            serde_json::from_str(r#"{"from":"github","to":"GitHub"}"#).unwrap();
+
+        assert!(!replacement.learned);
+    }
 
     #[test]
     fn stored_binding_returns_the_requested_binding() {

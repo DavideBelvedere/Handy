@@ -25,7 +25,7 @@ use crate::settings::{
     self, get_settings, AutoSubmitKey, ChineseScript, ClipboardHandling, KeyboardImplementation,
     LLMPrompt, LanguageDetectionMode, OverlayPosition, OverlayStyle, PasteMethod,
     ShortcutActivation, ShortcutBinding, SoundTheme, Theme, TypingTool, VadBackend,
-    APPLE_INTELLIGENCE_PROVIDER_ID,
+    WordReplacement, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -916,6 +916,18 @@ pub fn change_whats_new_last_seen_version_setting(
 pub fn update_custom_words(app: AppHandle, words: Vec<String>) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.custom_words = words;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn update_word_replacements(
+    app: AppHandle,
+    replacements: Vec<WordReplacement>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.word_replacements = replacements;
     settings::write_settings(&app, settings);
     Ok(())
 }

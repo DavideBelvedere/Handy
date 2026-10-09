@@ -1,7 +1,7 @@
 use crate::audio_toolkit::chunking;
 use crate::audio_toolkit::{
-    apply_custom_words, apply_scratch_that, detect_output_language, normalize_transcription_output,
-    remove_filler_words, OutputLanguageEvidence,
+    apply_custom_words, apply_scratch_that, apply_word_replacements, detect_output_language,
+    normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
 };
 use crate::chinese_script::{convert_chinese_script, ChineseVariety};
 use crate::engine_supervisor::{
@@ -1694,6 +1694,11 @@ fn post_process_transcription_text(
             raw
         };
 
+        // After custom words: learned pairs take their `from` from the text the
+        // user saw, which is already custom-word corrected. Runs for every
+        // engine (Whisper included) since these are exact substitutions.
+        let corrected = apply_word_replacements(&corrected, &settings.word_replacements);
+
         let without_fillers = remove_filler_words(
             &corrected,
             &output_language,
@@ -2091,6 +2096,31 @@ mod tests {
         };
         assert_eq!(run(true), "Buy bread.");
         assert_eq!(run(false), "Buy milk. Scratch that. Buy bread.");
+    }
+
+    #[test]
+    fn word_replacements_run_after_custom_words() {
+        // "MacBook Pro" only exists after custom words joined "Mac Book Pro", so the
+        // pair fires only if replacements run after custom words.
+        let settings = AppSettings {
+            custom_words: vec!["MacBook Pro".to_string()],
+            word_correction_threshold: 0.5,
+            word_replacements: vec![crate::settings::WordReplacement {
+                from: "MacBook Pro".to_string(),
+                to: "laptop".to_string(),
+                learned: true,
+            }],
+            filler_word_removal_enabled: false,
+            ..Default::default()
+        };
+        let result = post_process_transcription_text(
+            "using Mac Book Pro".to_string(),
+            &settings,
+            false,
+            &OutputLanguageEvidence::UserSelected("en".to_string()),
+            &languages(&["en"]),
+        );
+        assert_eq!(result, "using laptop");
     }
 
     #[test]

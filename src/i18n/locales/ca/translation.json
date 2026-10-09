@@ -590,6 +590,18 @@
         "remove": "Suprimiu {{word}}",
         "duplicate": "«{{word}}» ja existeix"
       },
+      "wordReplacements": {
+        "title": "Word Replacements",
+        "description": "Always replace a word or phrase with another — exact and case-insensitive, no fuzzy guessing. Leave the replacement blank to remove a word.",
+        "fromPlaceholder": "github",
+        "toPlaceholder": "GitHub",
+        "fromLabel": "Word to find",
+        "toLabel": "Replace with",
+        "add": "Add",
+        "remove": "Remove replacement {{from}} to {{to}}",
+        "emptyTarget": "(removed)",
+        "duplicate": "A replacement for \"{{word}}\" already exists"
+      },
       "voiceActivityDetection": {
         "title": "Detecció d'activitat de veu",
         "description": "Filtra els silencis dels enregistraments. Els models compatibles amb la transcripció en temps real utilitzen un marge final de detecció de veu més llarg; si desactiveu la detecció, s'enregistra l'àudio sense filtrar."
