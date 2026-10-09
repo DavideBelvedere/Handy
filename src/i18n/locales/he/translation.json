@@ -616,6 +616,10 @@
         "title": "הסרת מילות מילוי",
         "description": "מסיר מילות היסוס נפוצות מתמלולים. השבת כדי להשאיר אותן."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "כתב סיני",
         "description": "כותב תמלולים של מנדרינית וקנטונזית בתווים מפושטים, או בתווים מסורתיים כפי שכותבים בטייוואן או בהונג קונג. שפות אחרות נשארות ללא שינוי.",

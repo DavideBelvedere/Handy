@@ -616,6 +616,10 @@
         "title": "Rimuovi le parole riempitive",
         "description": "Rimuove le parole di esitazione più comuni dalle trascrizioni. Disattiva per mantenerle."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Dicendo \"scratch that\" o \"cancella quello\" viene rimossa la frase precedente."
+      },
       "chineseScript": {
         "title": "Scrittura cinese",
         "description": "Scrive le trascrizioni in mandarino e cantonese in caratteri semplificati, oppure in caratteri tradizionali come si scrivono a Taiwan o a Hong Kong. Le altre lingue restano invariate.",

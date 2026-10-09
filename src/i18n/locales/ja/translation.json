@@ -616,6 +616,10 @@
         "title": "フィラー語を削除",
         "description": "文字起こしから一般的なフィラー語を削除します。残すにはオフにしてください。"
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "中国語の表記",
         "description": "標準中国語と広東語の文字起こしを、簡体字、または台湾・香港で使われる繁体字で出力します。ほかの言語は変更されません。",

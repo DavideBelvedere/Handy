@@ -616,6 +616,10 @@
         "title": "移除語助詞",
         "description": "從轉錄中移除常見的語助詞。關閉此選項即可保留這些詞。"
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "繁簡轉換",
         "description": "將國語和粵語的轉錄內容以簡體字輸出，或以臺灣或香港使用的繁體字輸出。其他語言不受影響。",

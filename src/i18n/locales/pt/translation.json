@@ -616,6 +616,10 @@
         "title": "Remover palavras de preenchimento",
         "description": "Remove hesitações comuns das transcrições. Desative para mantê-las."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Escrita chinesa",
         "description": "Escreve as transcrições em mandarim e cantonês com caracteres simplificados ou com caracteres tradicionais, como são escritos em Taiwan ou Hong Kong. Os outros idiomas não são alterados.",

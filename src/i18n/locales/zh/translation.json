@@ -616,6 +616,10 @@
         "title": "移除语气词",
         "description": "从转录中移除常见的语气词。关闭此选项即可保留这些词。"
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "简繁转换",
         "description": "将普通话和粤语的转录结果输出为简体字，或台湾、香港通行的繁体字。其他语言保持不变。",

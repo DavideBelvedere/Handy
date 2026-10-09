@@ -616,6 +616,10 @@
         "title": "إزالة كلمات الحشو",
         "description": "يزيل كلمات التردد الشائعة من النصوص. عطّل هذا الخيار للاحتفاظ بها."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "الكتابة الصينية",
         "description": "يكتب تفريغ الماندرين والكانتونية بالحروف المبسّطة، أو بالحروف التقليدية كما تُكتب في تايوان أو هونغ كونغ. تبقى اللغات الأخرى دون تغيير.",

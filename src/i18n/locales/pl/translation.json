@@ -616,6 +616,10 @@
         "title": "Usuń wyrazy wypełniające",
         "description": "Usuwa typowe słowa wyrażające wahanie z transkrypcji. Wyłącz, aby je zachować."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Pismo chińskie",
         "description": "Zapisuje transkrypcje w języku mandaryńskim i kantońskim znakami uproszczonymi albo tradycyjnymi, w odmianie używanej na Tajwanie lub w Hongkongu. Inne języki pozostają bez zmian.",

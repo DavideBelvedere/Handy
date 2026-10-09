@@ -616,6 +616,10 @@
         "title": "Füllwörter entfernen",
         "description": "Entfernt häufige Verzögerungslaute aus Transkriptionen. Deaktivieren Sie diese Option, um sie beizubehalten."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Chinesische Schrift",
         "description": "Schreibt Transkriptionen auf Mandarin und Kantonesisch in vereinfachten Schriftzeichen oder in traditionellen Schriftzeichen, wie sie in Taiwan oder Hongkong geschrieben werden. Andere Sprachen bleiben unverändert.",

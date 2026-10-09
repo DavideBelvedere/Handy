@@ -616,6 +616,10 @@
         "title": "Elimina les falques",
         "description": "Elimina les expressions de vacil·lació habituals de les transcripcions. Desactiveu aquesta opció per conservar-les."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Escriptura xinesa",
         "description": "Escriu les transcripcions en mandarí i cantonès amb caràcters simplificats, o amb caràcters tradicionals tal com s'escriuen a Taiwan o a Hong Kong. Les altres llengües es deixen tal qual.",

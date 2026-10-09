@@ -616,6 +616,10 @@
         "title": "Видаляти слова-паразити",
         "description": "Видаляє поширені слова-вагання з транскрипцій. Вимкніть, щоб зберегти їх."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Китайська писемність",
         "description": "Записує транскрипції мандаринською та кантонською спрощеними ієрогліфами або традиційними, як їх пишуть на Тайвані чи в Гонконгу. Інші мови не змінюються.",

@@ -616,6 +616,10 @@
         "title": "Ta bort utfyllnadsord",
         "description": "Tar bort vanliga tvekljud från transkriberingar. Stäng av för att behålla dem."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Kinesisk skrift",
         "description": "Skriver mandarin- och kantonesiska transkriptioner med förenklade tecken, eller med traditionella tecken som de skrivs i Taiwan eller Hongkong. Andra språk lämnas oförändrade.",

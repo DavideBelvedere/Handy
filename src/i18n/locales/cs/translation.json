@@ -616,6 +616,10 @@
         "title": "Odstranit výplňová slova",
         "description": "Odstraňuje běžná slova vyjadřující váhání z přepisů. Vypnutím je zachováte."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Čínské písmo",
         "description": "Přepisy v mandarínštině a kantonštině se píší zjednodušenými znaky nebo tradičními znaky, jak se píší na Tchaj-wanu či v Hongkongu. Ostatní jazyky zůstanou beze změny.",

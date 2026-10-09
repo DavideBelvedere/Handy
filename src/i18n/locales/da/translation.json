@@ -616,6 +616,10 @@
         "title": "Fjern fyldord",
         "description": "Fjerner almindelige tøveord fra transskriptioner. Slå fra for at beholde dem."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Kinesisk skrift",
         "description": "Skriver mandarin- og kantonesiske transskriptioner med forenklede tegn eller med traditionelle tegn, som de skrives i Taiwan eller Hongkong. Andre sprog forbliver uændrede.",

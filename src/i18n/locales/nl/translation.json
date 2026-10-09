@@ -616,6 +616,10 @@
         "title": "Opvulwoorden verwijderen",
         "description": "Verwijdert veelvoorkomende aarzelwoorden uit transcripties. Schakel dit uit om ze te behouden."
       },
+      "scratchThat": {
+        "title": "Scratch that",
+        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+      },
       "chineseScript": {
         "title": "Chinees schrift",
         "description": "Schrijft Mandarijnse en Kantonese transcripties in vereenvoudigde tekens, of in traditionele tekens zoals gebruikt in Taiwan of Hongkong. Andere talen blijven ongewijzigd.",
