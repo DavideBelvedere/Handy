@@ -600,6 +600,7 @@
         "add": "추가",
         "remove": "{{from}} → {{to}} 바꾸기 제거",
         "emptyTarget": "(삭제됨)",
+        "learned": "Learned",
         "duplicate": "\"{{word}}\"에 대한 바꾸기가 이미 존재합니다"
       },
       "voiceActivityDetection": {

@@ -600,6 +600,7 @@
         "add": "添加",
         "remove": "删除替换 {{from}} 到 {{to}}",
         "emptyTarget": "（已删除）",
+        "learned": "Learned",
         "duplicate": "\"{{word}}\" 的替换已存在"
       },
       "voiceActivityDetection": {

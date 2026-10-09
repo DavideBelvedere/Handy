@@ -5,6 +5,7 @@ import type { WordReplacement } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
+import Badge from "../ui/Badge";
 import { SettingContainer } from "../ui/SettingContainer";
 
 interface WordReplacementsProps {
@@ -147,6 +148,11 @@ export const WordReplacements: React.FC<WordReplacementsProps> = React.memo(
                     </span>
                   )}
                 </span>
+                {replacement.learned && (
+                  <Badge variant="secondary" className="!px-1.5 !py-0">
+                    {t("settings.advanced.wordReplacements.learned")}
+                  </Badge>
+                )}
                 <svg
                   className="w-3 h-3"
                   fill="none"

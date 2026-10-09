@@ -600,6 +600,7 @@
         "add": "Ajouter",
         "remove": "Supprimer le remplacement {{from}} par {{to}}",
         "emptyTarget": "(supprimé)",
+        "learned": "Learned",
         "duplicate": "Un remplacement pour \"{{word}}\" existe déjà"
       },
       "voiceActivityDetection": {

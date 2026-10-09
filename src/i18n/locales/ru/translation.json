@@ -600,6 +600,7 @@
         "add": "Добавить",
         "remove": "Удалить замену {{from}} на {{to}}",
         "emptyTarget": "(удалено)",
+        "learned": "Learned",
         "duplicate": "Замена для \"{{word}}\" уже существует"
       },
       "voiceActivityDetection": {

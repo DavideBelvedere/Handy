@@ -600,6 +600,7 @@
         "add": "Thêm",
         "remove": "Xóa thay thế {{from}} thành {{to}}",
         "emptyTarget": "(đã xóa)",
+        "learned": "Learned",
         "duplicate": "Đã tồn tại thay thế cho \"{{word}}\""
       },
       "voiceActivityDetection": {

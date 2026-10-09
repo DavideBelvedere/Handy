@@ -600,6 +600,7 @@
         "add": "Добавяне",
         "remove": "Премахване на замяната {{from}} на {{to}}",
         "emptyTarget": "(премахната)",
+        "learned": "Learned",
         "duplicate": "Замяна за „{{word}}“ вече съществува"
       },
       "voiceActivityDetection": {

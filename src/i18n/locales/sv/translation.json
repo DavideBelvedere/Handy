@@ -600,6 +600,7 @@
         "add": "Lägg till",
         "remove": "Ta bort ersättningen {{from}} till {{to}}",
         "emptyTarget": "(borttagen)",
+        "learned": "Learned",
         "duplicate": "En ersättning för \"{{word}}\" finns redan"
       },
       "voiceActivityDetection": {

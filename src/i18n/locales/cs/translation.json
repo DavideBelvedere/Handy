@@ -600,6 +600,7 @@
         "add": "Přidat",
         "remove": "Odebrat náhradu {{from}} za {{to}}",
         "emptyTarget": "(odebráno)",
+        "learned": "Learned",
         "duplicate": "Náhrada pro \"{{word}}\" již existuje"
       },
       "voiceActivityDetection": {

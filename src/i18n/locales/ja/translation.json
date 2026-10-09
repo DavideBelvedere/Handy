@@ -600,6 +600,7 @@
         "add": "追加",
         "remove": "置換 {{from}} → {{to}} を削除",
         "emptyTarget": "（削除）",
+        "learned": "Learned",
         "duplicate": "「{{word}}」の置換は既に存在します"
       },
       "voiceActivityDetection": {

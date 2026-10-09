@@ -600,6 +600,7 @@
         "add": "إضافة",
         "remove": "إزالة الاستبدال {{from}} إلى {{to}}",
         "emptyTarget": "(محذوفة)",
+        "learned": "Learned",
         "duplicate": "يوجد بالفعل استبدال لـ \"{{word}}\""
       },
       "voiceActivityDetection": {

@@ -600,6 +600,7 @@
         "add": "הוסף",
         "remove": "הסר את ההחלפה {{from}} ל־{{to}}",
         "emptyTarget": "(הוסרה)",
+        "learned": "Learned",
         "duplicate": "החלפה עבור \"{{word}}\" כבר קיימת"
       },
       "voiceActivityDetection": {

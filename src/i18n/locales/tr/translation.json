@@ -600,6 +600,7 @@
         "add": "Ekle",
         "remove": "{{from}} → {{to}} değişimini kaldır",
         "emptyTarget": "(kaldırıldı)",
+        "learned": "Learned",
         "duplicate": "\"{{word}}\" için bir değişim zaten mevcut"
       },
       "voiceActivityDetection": {
