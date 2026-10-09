@@ -16,6 +16,7 @@ mod helpers;
 mod input;
 mod language_detection;
 mod languages;
+mod live_typing;
 mod llm_client;
 mod managers;
 mod memory;
@@ -223,6 +224,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
     app_handle.manage(TranscriptionJobManager::new(app_handle));
+    app_handle.manage(live_typing::LiveTyper::new(app_handle.clone()));
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -739,6 +741,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_scratch_that_enabled_setting,
             shortcut::change_auto_learn_enabled_setting,
+            shortcut::change_live_typing_enabled_setting,
             shortcut::change_chinese_script_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,

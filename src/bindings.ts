@@ -439,6 +439,14 @@ async changeAutoLearnEnabledSetting(enabled: boolean) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeLiveTypingEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_live_typing_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeChineseScriptSetting(script: ChineseScript) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_chinese_script_setting", { script }) };
@@ -1159,6 +1167,10 @@ reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: strin
  * Learn word replacements from corrections made in the target app.
  */
 auto_learn_enabled?: boolean; 
+/**
+ * Type streamed dictation into the focused field while speaking.
+ */
+live_typing_enabled?: boolean; 
 /**
  * Fresh installs default from the OS locale; existing stores are migrated
  * in `apply_settings_migrations`.

@@ -1635,7 +1635,7 @@ fn transcribe_cpp_run_plan(
     }
 }
 
-fn post_process_transcription_text(
+pub(crate) fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
     custom_words_already_prompted: bool,

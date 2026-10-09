@@ -115,6 +115,7 @@ pub fn cancel_current_operation(app: &AppHandle) {
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.cancel_stream();
     tm.cancel_transcription();
+    app.state::<crate::live_typing::LiveTyper>().cancel();
 
     // Update tray icon and hide overlay
     set_tray_state(app, crate::tray::TrayIconState::Idle);

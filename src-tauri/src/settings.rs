@@ -552,6 +552,9 @@ pub struct AppSettings {
     /// Learn word replacements from corrections made in the target app.
     #[serde(default)]
     pub auto_learn_enabled: bool,
+    /// Type streamed dictation into the focused field while speaking.
+    #[serde(default)]
+    pub live_typing_enabled: bool,
     /// Fresh installs default from the OS locale; existing stores are migrated
     /// in `apply_settings_migrations`.
     #[serde(default)]
@@ -1110,6 +1113,7 @@ pub fn get_default_settings() -> AppSettings {
         custom_filler_words: None,
         scratch_that_enabled: default_scratch_that_enabled(),
         auto_learn_enabled: false,
+        live_typing_enabled: false,
         chinese_script: default_chinese_script(),
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),
@@ -1804,6 +1808,7 @@ mod tests {
     fn scratch_that_is_enabled_by_default() {
         assert!(get_default_settings().scratch_that_enabled);
         assert!(!get_default_settings().auto_learn_enabled);
+        assert!(!get_default_settings().live_typing_enabled);
     }
 
     #[test]

@@ -4,13 +4,17 @@ use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, S
 use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::{recording_notice_code, AudioRecordingManager};
 use crate::correction_learner;
+use crate::live_typing::{Finish, LiveTyper};
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::policy::{live_decode, LiveDecode, ModelTraits};
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::{Transcription, TranscriptionManager};
 use crate::notices::{self, Notice, NoticeCode, NoticeSource};
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, PasteMethod, ShortcutActivation,
+    APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
@@ -541,6 +545,14 @@ impl ShortcutAction for TranscribeAction {
         } else {
             VadPolicy::Offline
         };
+        // Toggle only: in hold modes the shortcut modifier is still down while
+        // typing, turning deltas into shortcuts.
+        let live_typing = settings.live_typing_enabled
+            && model_supports_streaming
+            && settings.shortcut_activation == ShortcutActivation::Toggle
+            && settings.paste_method != PasteMethod::None;
+        // Every start, so a session an earlier dictation left behind never types.
+        app.state::<LiveTyper>().begin(live_typing);
         // Before the model loads, whether it keeps its accuracy on long audio
         // is unknown, so assume not: the worker decides again with the loaded
         // model, and a wrong guess costs only an idle worker.
@@ -638,6 +650,7 @@ impl ShortcutAction for TranscribeAction {
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
             tm.cancel_stream();
+            app.state::<LiveTyper>().cancel();
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
                 notices::raise(
@@ -717,6 +730,7 @@ impl ShortcutAction for TranscribeAction {
                 if rm.was_cancelled_since(cancel_generation) {
                     debug!("Transcription operation cancelled after recording stop");
                     tm.cancel_stream();
+                    ah.state::<LiveTyper>().cancel();
                     utils::hide_recording_overlay(&ah);
                     set_tray_state(&ah, TrayIconState::Idle);
                     return;
@@ -727,6 +741,7 @@ impl ShortcutAction for TranscribeAction {
                     // Tear down any streaming worker so its channel doesn't leak
                     // and block the next start_stream.
                     tm.cancel_stream();
+                    ah.state::<LiveTyper>().cancel();
                     utils::hide_recording_overlay(&ah);
                     set_tray_state(&ah, TrayIconState::Idle);
                     emit_transcription_complete(&ah, empty_outcome(input_silent), 0, stop_time);
@@ -843,6 +858,26 @@ impl ShortcutAction for TranscribeAction {
                                 set_tray_state(&ah, TrayIconState::Idle);
                                 return;
                             };
+
+                            // Off the main thread: the typer types through it.
+                            let live = ah.state::<LiveTyper>().finish(final_text.clone());
+                            if live == Finish::Handled {
+                                let outcome = if final_text.is_empty() {
+                                    empty_outcome(input_silent)
+                                } else {
+                                    if get_settings(&ah).auto_learn_enabled {
+                                        correction_learner::spawn_correction_watcher(
+                                            &ah,
+                                            final_text,
+                                        );
+                                    }
+                                    TranscriptionOutcome::Typed
+                                };
+                                utils::hide_recording_overlay(&ah);
+                                set_tray_state(&ah, TrayIconState::Idle);
+                                emit_transcription_complete(&ah, outcome, sample_count, stop_time);
+                                return;
+                            }
 
                             if final_text.is_empty() {
                                 utils::hide_recording_overlay(&ah);
@@ -1002,6 +1037,7 @@ impl ShortcutAction for TranscribeAction {
                 debug!("No samples retrieved from recording stop");
                 // Tear down any streaming worker so its channel doesn't leak.
                 tm.cancel_stream();
+                ah.state::<LiveTyper>().cancel();
                 utils::hide_recording_overlay(&ah);
                 set_tray_state(&ah, TrayIconState::Idle);
                 if !rm.was_cancelled_since(cancel_generation) {

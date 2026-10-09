@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info};
+use tauri::Manager;
 use transcribe_cpp::StreamOptions;
 
 use super::chunked::{ChunkSetup, ChunkedDecode, PendingSetup};
@@ -15,6 +16,7 @@ use super::{
 };
 use crate::audio_toolkit::OutputLanguageEvidence;
 use crate::engine_supervisor::{EngineError, LoadedInfo, StreamHandle, StreamProgress};
+use crate::live_typing::LiveTyper;
 use crate::settings::{get_settings, AppSettings};
 
 /// One recording's live decode.
@@ -170,11 +172,18 @@ impl<'a> StreamSession<'a> {
             let app_handle = tm.app_handle.clone();
             let languages = setup.languages.clone();
             let mut preview_script = PreviewScript::new(settings.chinese_script, &output_language);
+            let live_typer = app_handle
+                .try_state::<LiveTyper>()
+                .map(|typer| typer.inner().clone());
+            let live_language = output_language.clone();
             move |progress: StreamProgress| {
                 let mut perf = lock_perf(&perf);
                 perf.record_compute(progress.elapsed);
                 perf.record_update(&progress.update);
                 if let Some(text) = progress.text {
+                    if let Some(typer) = &live_typer {
+                        typer.on_committed(&text.committed, &live_language, &languages);
+                    }
                     perf.record_emit();
                     let (committed, tentative) =
                         preview_script.convert(&text.committed, &text.tentative, &languages);

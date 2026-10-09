@@ -24,6 +24,14 @@ const WINDOW_RADIUS_UTF16: usize = 2_000;
 
 pub use imp::{enable_manual_accessibility, focused_field, FocusedField};
 
+/// Sets AXManualAccessibility on the app owning keyboard focus, so a
+/// Chrome/Electron app has built its AX tree by the time it is read.
+pub fn enable_manual_accessibility_for_focused_app() {
+    if let Some(pid) = imp::focused_app_pid() {
+        enable_manual_accessibility(pid);
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use super::{cursor_window, decode_utf16_window, is_large_doc, range_before, Utf16Range};
