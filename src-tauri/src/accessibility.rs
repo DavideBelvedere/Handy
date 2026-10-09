@@ -26,7 +26,7 @@ pub use imp::{enable_manual_accessibility, focused_field, FocusedField};
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::{decode_utf16_window, large_doc_window, range_before, Utf16Range};
+    use super::{cursor_window, decode_utf16_window, is_large_doc, range_before, Utf16Range};
     use objc2_application_services::{AXError, AXUIElement, AXValue, AXValueType};
     use objc2_core_foundation::{
         CFBoolean, CFIndex, CFNumber, CFRange, CFRetained, CFString, CFType,
@@ -108,16 +108,16 @@ mod imp {
 
         /// Full AXValue; when AXNumberOfCharacters > 10_000, instead a window
         /// of ~±2_000 UTF-16 units around the cursor via AXStringForRange (no
-        /// surrogate pair split at its edges). Falls back to the full AXValue
-        /// if the window can't be read.
+        /// surrogate pair split at its edges).
         pub fn value(&self) -> Option<String> {
-            let window = large_doc_window(
-                self.number_of_characters(),
-                self.selected_range().map(|r| r.location),
-            );
-            window
-                .and_then(|range| self.string_for_range(range))
-                .or_else(|| self.string_attr("AXValue"))
+            match self.number_of_characters() {
+                // Never copy a huge AXValue: no cursor or unreadable window -> None.
+                Some(total) if is_large_doc(total) => {
+                    let cursor = self.selected_range()?.location;
+                    self.string_for_range(cursor_window(cursor, total))
+                }
+                _ => self.string_attr("AXValue"),
+            }
         }
 
         pub fn selected_range(&self) -> Option<Utf16Range> {
@@ -294,18 +294,22 @@ mod imp {
     }
 }
 
-/// The window `value()` should read instead of the full AXValue, or None to
-/// read AXValue (small or unsized document, or no cursor to center on).
+/// Above this size `value()` reads only a window around the cursor.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn large_doc_window(total: Option<usize>, cursor: Option<usize>) -> Option<Utf16Range> {
-    let total = total.filter(|&t| t > LARGE_DOC_UTF16)?;
-    let cursor = cursor?.min(total);
+fn is_large_doc(total_utf16: usize) -> bool {
+    total_utf16 > LARGE_DOC_UTF16
+}
+
+/// ~±2_000 UTF-16 units around `cursor`, clamped to `[0, total]`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn cursor_window(cursor: usize, total: usize) -> Utf16Range {
+    let cursor = cursor.min(total);
     let start = cursor.saturating_sub(WINDOW_RADIUS_UTF16);
     let end = cursor.saturating_add(WINDOW_RADIUS_UTF16).min(total);
-    Some(Utf16Range {
+    Utf16Range {
         location: start,
         length: end - start,
-    })
+    }
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -398,42 +402,40 @@ mod tests {
     }
 
     #[test]
-    fn small_or_unsized_docs_read_full_value() {
-        assert_eq!(large_doc_window(None, Some(5)), None);
-        assert_eq!(large_doc_window(Some(9_999), Some(5)), None);
-        assert_eq!(large_doc_window(Some(10_000), Some(5)), None);
-        assert_eq!(large_doc_window(Some(50_000), None), None);
+    fn only_docs_over_10k_units_are_windowed() {
+        assert!(!is_large_doc(0));
+        assert!(!is_large_doc(9_999));
+        assert!(!is_large_doc(10_000));
+        assert!(is_large_doc(10_001));
+        assert!(is_large_doc(1_000_000));
     }
 
     #[test]
-    fn large_doc_window_centers_on_cursor() {
+    fn cursor_window_centers_on_cursor() {
         assert_eq!(
-            large_doc_window(Some(10_001), Some(5_000)),
-            Some(Utf16Range {
+            cursor_window(5_000, 10_001),
+            Utf16Range {
                 location: 3_000,
                 length: 4_000
-            })
+            }
         );
     }
 
     #[test]
-    fn large_doc_window_clamps_at_start_and_end() {
+    fn cursor_window_clamps_at_start_and_end() {
         let at_start = Utf16Range {
             location: 0,
             length: 2_000,
         };
-        assert_eq!(large_doc_window(Some(20_000), Some(0)), Some(at_start));
+        assert_eq!(cursor_window(0, 20_000), at_start);
         let at_end = Utf16Range {
             location: 18_000,
             length: 2_000,
         };
-        assert_eq!(large_doc_window(Some(20_000), Some(20_000)), Some(at_end));
+        assert_eq!(cursor_window(20_000, 20_000), at_end);
         // A cursor past the end (stale AX value) is clamped, never overflows.
-        assert_eq!(large_doc_window(Some(20_000), Some(99_999)), Some(at_end));
-        assert_eq!(
-            large_doc_window(Some(20_000), Some(usize::MAX)),
-            Some(at_end)
-        );
+        assert_eq!(cursor_window(99_999, 20_000), at_end);
+        assert_eq!(cursor_window(usize::MAX, 20_000), at_end);
     }
 
     #[test]
@@ -510,7 +512,7 @@ mod tests {
         let doc: Vec<u16> = units(&"é😀x".repeat(7_500));
         assert_eq!(doc.len(), 30_000);
         for cursor in [0, 1, 2, 3, 4_001, 15_001, 29_999, 30_000] {
-            let range = large_doc_window(Some(doc.len()), Some(cursor)).unwrap();
+            let range = cursor_window(cursor, doc.len());
             assert!(range.length <= 2 * WINDOW_RADIUS_UTF16);
             let s = read(&doc, range);
             assert!(!s.contains('\u{FFFD}'), "split pair at cursor {cursor}");
