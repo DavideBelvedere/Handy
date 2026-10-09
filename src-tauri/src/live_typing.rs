@@ -218,10 +218,16 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str) -> Finish {
         FinishPlan::TypeRest(rest) => (0, rest),
         FinishPlan::Replace => (s.typed.chars().count(), text.clone()),
     };
-    if !s.poisoned
-        && verify_field(&s.target, &s.typed)
-        && type_on_main(app, backspaces, &insert).is_ok()
-    {
+    let field = if s.poisoned {
+        FieldCheck::Mismatch
+    } else {
+        verify_field(&s.target, &s.typed)
+    };
+    // Appending deletes nothing, so an unreadable field only needs focus;
+    // deleting needs a verified read.
+    let may_type =
+        field == FieldCheck::Verified || (backspaces == 0 && field == FieldCheck::Unreadable);
+    if may_type && type_on_main(app, backspaces, &insert).is_ok() {
         debug!(
             "Live typing finished: {} typed, {} backspaces, {} chars inserted",
             s.typed.chars().count(),
@@ -266,7 +272,10 @@ fn cancel_session(app: &AppHandle, s: Session) {
         return;
     }
     let count = s.typed.chars().count();
-    if !s.poisoned && verify_field(&s.target, &s.typed) && type_on_main(app, count, "").is_ok() {
+    if !s.poisoned
+        && verify_field(&s.target, &s.typed) == FieldCheck::Verified
+        && type_on_main(app, count, "").is_ok()
+    {
         debug!("Live typing cancelled: removed {count} typed chars");
     } else {
         warn!("Live typing cancelled: field not verified, left {count} typed chars in place");
@@ -277,26 +286,41 @@ fn on_target(target: &FocusedField) -> bool {
     accessibility::focused_field().is_some_and(|f| f.same_as(target))
 }
 
-/// The target still has focus and holds `typed` right before the cursor,
-/// with nothing selected.
-fn verify_field(target: &FocusedField, typed: &str) -> bool {
+#[derive(Debug, PartialEq, Eq)]
+enum FieldCheck {
+    /// The target has focus and holds `typed` right before the cursor, with
+    /// nothing selected.
+    Verified,
+    /// Focus moved, or the field was read and never matched.
+    Mismatch,
+    /// The target has focus but its text could not be read.
+    Unreadable,
+}
+
+fn verify_field(target: &FocusedField, typed: &str) -> FieldCheck {
     let len = typed.encode_utf16().count();
+    let mut read_any = false;
     for attempt in 0..VERIFY_ATTEMPTS {
         if !on_target(target) {
-            return false;
+            return FieldCheck::Mismatch;
         }
         if let (Some(before), Some(selected)) =
             (target.text_before_cursor(len), target.selected_range())
         {
             if can_replace(&before, selected, typed) {
-                return true;
+                return FieldCheck::Verified;
             }
+            read_any = true;
         }
         if attempt + 1 < VERIFY_ATTEMPTS {
             thread::sleep(VERIFY_RETRY);
         }
     }
-    false
+    if read_any {
+        FieldCheck::Mismatch
+    } else {
+        FieldCheck::Unreadable
+    }
 }
 
 /// Sends `backspaces` Backspace clicks, then types `text`, on the main thread
