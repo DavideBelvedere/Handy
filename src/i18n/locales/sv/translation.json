@@ -646,6 +646,10 @@
           "traditionalTw": "Traditionell (Taiwan)",
           "traditionalHk": "Traditionell (Hongkong)"
         }
+      },
+      "liveTyping": {
+        "title": "Live typing",
+        "description": "Text appears in the focused field while you speak. Works only in toggle shortcut mode and with streaming models. macOS only."
       }
     },
     "postProcessing": {
@@ -979,7 +983,9 @@
     "filePostProcessFailedTitle": "Transkriberat utan efterbearbetning",
     "filePostProcessFailed": "Efterbearbetningen slutfördes inte, så transkriptionen sparades som den är.",
     "fileTranscriptionFailedTitle": "Transkriptionen av filen misslyckades",
-    "transcriptionFailedTitle": "Transkriptionen misslyckades"
+    "transcriptionFailedTitle": "Transkriptionen misslyckades",
+    "liveTypingFallbackTitle": "Couldn't update the typed text",
+    "liveTypingFallback": "The final text was copied to the clipboard."
   },
   "notices": {
     "errorOne": "{{n}} fel",

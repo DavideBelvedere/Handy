@@ -646,6 +646,10 @@
           "traditionalTw": "번체 (대만)",
           "traditionalHk": "번체 (홍콩)"
         }
+      },
+      "liveTyping": {
+        "title": "Live typing",
+        "description": "Text appears in the focused field while you speak. Works only in toggle shortcut mode and with streaming models. macOS only."
       }
     },
     "postProcessing": {
@@ -984,7 +988,9 @@
     "filePostProcessFailedTitle": "후처리 없이 받아씀",
     "filePostProcessFailed": "후처리가 완료되지 않아 받아쓰기 결과를 그대로 저장했습니다.",
     "fileTranscriptionFailedTitle": "파일 음성 인식 실패",
-    "transcriptionFailedTitle": "음성 인식 실패"
+    "transcriptionFailedTitle": "음성 인식 실패",
+    "liveTypingFallbackTitle": "Couldn't update the typed text",
+    "liveTypingFallback": "The final text was copied to the clipboard."
   },
   "notices": {
     "errorOne": "오류 {{n}}개",

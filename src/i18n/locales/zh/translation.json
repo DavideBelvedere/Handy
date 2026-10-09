@@ -646,6 +646,10 @@
           "traditionalTw": "繁体（台湾）",
           "traditionalHk": "繁体（香港）"
         }
+      },
+      "liveTyping": {
+        "title": "Live typing",
+        "description": "Text appears in the focused field while you speak. Works only in toggle shortcut mode and with streaming models. macOS only."
       }
     },
     "postProcessing": {
@@ -979,7 +983,9 @@
     "filePostProcessFailedTitle": "已转录，未经后处理",
     "filePostProcessFailed": "后处理未完成，因此按原样保存转录内容。",
     "fileTranscriptionFailedTitle": "文件转录失败",
-    "transcriptionFailedTitle": "转录失败"
+    "transcriptionFailedTitle": "转录失败",
+    "liveTypingFallbackTitle": "Couldn't update the typed text",
+    "liveTypingFallback": "The final text was copied to the clipboard."
   },
   "notices": {
     "errorOne": "{{n}} 个错误",

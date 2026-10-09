@@ -646,6 +646,10 @@
           "traditionalTw": "Tradizionale (Taiwan)",
           "traditionalHk": "Tradizionale (Hong Kong)"
         }
+      },
+      "liveTyping": {
+        "title": "Digitazione in tempo reale",
+        "description": "Il testo compare nel campo attivo mentre parli. Funziona solo con la scorciatoia in modalità toggle e con i modelli in streaming. Solo macOS."
       }
     },
     "postProcessing": {
@@ -979,7 +983,9 @@
     "filePostProcessFailedTitle": "Trascritto senza post-elaborazione",
     "filePostProcessFailed": "La post-elaborazione non è terminata, quindi la trascrizione è stata salvata così com'è.",
     "fileTranscriptionFailedTitle": "Trascrizione del file non riuscita",
-    "transcriptionFailedTitle": "Trascrizione non riuscita"
+    "transcriptionFailedTitle": "Trascrizione non riuscita",
+    "liveTypingFallbackTitle": "Impossibile aggiornare il testo digitato",
+    "liveTypingFallback": "Il testo finale è stato copiato negli appunti."
   },
   "notices": {
     "errorOne": "{{n}} errore",

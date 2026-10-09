@@ -646,6 +646,10 @@
           "traditionalTw": "Традиційні (Тайвань)",
           "traditionalHk": "Традиційні (Гонконг)"
         }
+      },
+      "liveTyping": {
+        "title": "Live typing",
+        "description": "Text appears in the focused field while you speak. Works only in toggle shortcut mode and with streaming models. macOS only."
       }
     },
     "postProcessing": {
@@ -979,7 +983,9 @@
     "filePostProcessFailedTitle": "Розшифровано без постобробки",
     "filePostProcessFailed": "Постобробка не завершилася, тому розшифровку збережено як є.",
     "fileTranscriptionFailedTitle": "Помилка транскрипції файлу",
-    "transcriptionFailedTitle": "Помилка транскрипції"
+    "transcriptionFailedTitle": "Помилка транскрипції",
+    "liveTypingFallbackTitle": "Couldn't update the typed text",
+    "liveTypingFallback": "The final text was copied to the clipboard."
   },
   "notices": {
     "errorOne": "{{n}} помилка",

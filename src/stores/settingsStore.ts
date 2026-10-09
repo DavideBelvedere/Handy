@@ -208,6 +208,8 @@ const settingUpdaters: {
     commands.changeScratchThatEnabledSetting(value as boolean),
   auto_learn_enabled: (value) =>
     commands.changeAutoLearnEnabledSetting(value as boolean),
+  live_typing_enabled: (value) =>
+    commands.changeLiveTypingEnabledSetting(value as boolean),
   chinese_script: (value) =>
     commands.changeChineseScriptSetting(value as ChineseScript),
   show_tray_icon: (value) =>
