@@ -463,6 +463,37 @@ pub fn remove_filler_words(
     filtered
 }
 
+static SCRATCH_THAT_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b(?:scratch that|delete that)\b[\s.,;:!?]*").unwrap());
+
+/// Drops each "scratch that" / "delete that" cue together with the sentence or
+/// clause before it (back to the previous `.?!` or the start of the text).
+// shortcut: English cues and Latin sentence terminators only, extend per language when needed.
+pub fn apply_scratch_that(text: &str) -> String {
+    let mut text = text.to_string();
+    while let Some(cue) = SCRATCH_THAT_PATTERN.find(&text) {
+        let before = text[..cue.start()].trim_end();
+        // Strip the terminator closing the dropped sentence, then keep everything up to the one before it.
+        let before = before.trim_end_matches(['.', '?', '!']);
+        let mut kept_end = 0;
+        let mut chars = before.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if matches!(c, '.' | '?' | '!') && chars.peek().is_some_and(|(_, n)| n.is_whitespace())
+            {
+                kept_end = i + c.len_utf8();
+            }
+        }
+        let kept = &before[..kept_end];
+        let rest = &text[cue.end()..];
+        text = match (kept.is_empty(), rest.is_empty()) {
+            (_, true) => kept.to_string(),
+            (true, false) => rest.to_string(),
+            (false, false) => format!("{kept} {rest}"),
+        };
+    }
+    text
+}
+
 /// Applies non-filler transcription cleanup.
 ///
 /// Kept separate from [`remove_filler_words`] so disabling filler deletion
@@ -494,6 +525,65 @@ mod tests {
         let language = OutputLanguageEvidence::UserSelected(language.to_string());
         let filtered = remove_filler_words(text, &language, custom_filler_words, true);
         normalize_transcription_output(&filtered)
+    }
+
+    #[test]
+    fn scratch_that_drops_preceding_sentence_mid_text() {
+        assert_eq!(
+            apply_scratch_that("Hello there. Buy milk. Scratch that. Buy bread."),
+            "Hello there. Buy bread."
+        );
+    }
+
+    #[test]
+    fn scratch_that_without_terminators_drops_back_to_last_sentence() {
+        assert_eq!(
+            apply_scratch_that("Hello there. buy milk scratch that buy bread"),
+            "Hello there. buy bread"
+        );
+        assert_eq!(
+            apply_scratch_that("buy milk, scratch that, buy bread"),
+            "buy bread"
+        );
+    }
+
+    #[test]
+    fn scratch_that_at_start_drops_only_the_cue() {
+        assert_eq!(apply_scratch_that("Scratch that. Hello"), "Hello");
+    }
+
+    #[test]
+    fn scratch_that_at_end_drops_cue_and_last_sentence() {
+        assert_eq!(
+            apply_scratch_that("Keep this. Drop this. Delete that."),
+            "Keep this."
+        );
+        assert_eq!(apply_scratch_that("buy milk. scratch that"), "");
+    }
+
+    #[test]
+    fn scratch_that_repeated_cues_chain_backwards() {
+        assert_eq!(
+            apply_scratch_that("One. Two. Three. scratch that scratch that Four."),
+            "One. Four."
+        );
+    }
+
+    #[test]
+    fn scratch_that_is_case_insensitive_and_word_bounded() {
+        assert_eq!(apply_scratch_that("a. b. SCRATCH THAT, c."), "a. c.");
+        assert_eq!(
+            apply_scratch_that("I will scratch thatch roofs"),
+            "I will scratch thatch roofs"
+        );
+    }
+
+    #[test]
+    fn scratch_that_without_cue_is_unchanged() {
+        assert_eq!(
+            apply_scratch_that("Nothing to see here."),
+            "Nothing to see here."
+        );
     }
 
     #[test]

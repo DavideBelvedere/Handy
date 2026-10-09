@@ -1,6 +1,6 @@
 use crate::audio_toolkit::chunking;
 use crate::audio_toolkit::{
-    apply_custom_words, detect_output_language, normalize_transcription_output,
+    apply_custom_words, apply_scratch_that, detect_output_language, normalize_transcription_output,
     remove_filler_words, OutputLanguageEvidence,
 };
 use crate::chinese_script::{convert_chinese_script, ChineseVariety};
@@ -1678,6 +1678,12 @@ fn post_process_transcription_text(
             _ => raw,
         };
 
+        let raw = if settings.scratch_that_enabled {
+            apply_scratch_that(&raw)
+        } else {
+            raw
+        };
+
         let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
             apply_custom_words(
                 &raw,
@@ -2065,6 +2071,26 @@ mod tests {
 
             assert_eq!(result, "学校に行きます", "{evidence:?}");
         }
+    }
+
+    #[test]
+    fn scratch_that_runs_when_enabled_and_is_skipped_when_disabled() {
+        let run = |enabled: bool| {
+            let settings = AppSettings {
+                scratch_that_enabled: enabled,
+                filler_word_removal_enabled: false,
+                ..Default::default()
+            };
+            post_process_transcription_text(
+                "Buy milk. Scratch that. Buy bread.".to_string(),
+                &settings,
+                false,
+                &OutputLanguageEvidence::UserSelected("en".to_string()),
+                &languages(&["en"]),
+            )
+        };
+        assert_eq!(run(true), "Buy bread.");
+        assert_eq!(run(false), "Buy milk. Scratch that. Buy bread.");
     }
 
     #[test]
