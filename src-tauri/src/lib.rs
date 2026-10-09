@@ -1,3 +1,4 @@
+pub mod accessibility;
 mod actions;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -751,6 +752,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::handy_keys::stop_handy_keys_recording,
             secure_input::get_secure_input_status,
             secure_input::run_keyboard_diagnostic,
+            accessibility::probe_focused_field,
             trigger_update_check,
             show_main_window_command,
             commands::cancel_operation,
