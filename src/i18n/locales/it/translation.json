@@ -881,6 +881,13 @@
         "verdictOk": "Gli eventi dei tasti arrivano a Handy normalmente.",
         "verdictNoEvents": "Nessun evento rilevato: hai premuto qualche tasto durante il test?",
         "failed": "Diagnostica non riuscita: {{error}}"
+      },
+      "focusProbe": {
+        "title": "Sonda campo attivo (temporanea)",
+        "description": "Clicca, poi passa a un'altra app entro 5 secondi. Mostra i metadati del suo campo di testo attivo (ruolo, lunghezza, selezione), mai il contenuto.",
+        "run": "Sonda campo attivo (5 s)",
+        "running": "Passa subito all'app di destinazione… lettura tra 5 s",
+        "failed": "Sonda non riuscita: {{error}}"
       }
     },
     "about": {

@@ -881,6 +881,13 @@
         "verdictOk": "按鍵事件正常送達 Handy。",
         "verdictNoEvents": "未擷取到任何事件——測試期間您有按鍵嗎？",
         "failed": "診斷失敗：{{error}}"
+      },
+      "focusProbe": {
+        "title": "Focused Field Probe (temporary)",
+        "description": "Click, then switch to another app within 5 seconds. Shows metadata of its focused text field (role, length, selection) — never its content.",
+        "run": "Probe focused field (5 s)",
+        "running": "Switch to the target app now… reading in 5 s",
+        "failed": "Probe failed: {{error}}"
       }
     },
     "about": {

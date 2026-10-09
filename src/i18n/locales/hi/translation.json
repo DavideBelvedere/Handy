@@ -881,6 +881,13 @@
         "verdictOk": "कुंजी इवेंट Handy तक सामान्य रूप से पहुँच रहे हैं.",
         "verdictNoEvents": "कोई इवेंट कैप्चर नहीं हुआ — क्या आपने टेस्ट के दौरान कोई कुंजी दबाई थी?",
         "failed": "डायग्नोस्टिक विफल: {{error}}"
+      },
+      "focusProbe": {
+        "title": "Focused Field Probe (temporary)",
+        "description": "Click, then switch to another app within 5 seconds. Shows metadata of its focused text field (role, length, selection) — never its content.",
+        "run": "Probe focused field (5 s)",
+        "running": "Switch to the target app now… reading in 5 s",
+        "failed": "Probe failed: {{error}}"
       }
     },
     "about": {

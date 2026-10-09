@@ -881,6 +881,13 @@
         "verdictOk": "Tuş olayları Handy'ye normal şekilde ulaşıyor.",
         "verdictNoEvents": "Hiç olay yakalanmadı — test sırasında herhangi bir tuşa bastınız mı?",
         "failed": "Tanılama başarısız: {{error}}"
+      },
+      "focusProbe": {
+        "title": "Focused Field Probe (temporary)",
+        "description": "Click, then switch to another app within 5 seconds. Shows metadata of its focused text field (role, length, selection) — never its content.",
+        "run": "Probe focused field (5 s)",
+        "running": "Switch to the target app now… reading in 5 s",
+        "failed": "Probe failed: {{error}}"
       }
     },
     "about": {

@@ -881,6 +881,18 @@
         "verdictOk": "키 이벤트가 Handy에 정상적으로 도달하고 있습니다.",
         "verdictNoEvents": "이벤트가 감지되지 않았습니다. 테스트 중에 키를 누르셨나요?",
         "failed": "진단 실패: {{error}}"
+      },
+      "focusProbe": {
+        "title": "Focused Field Probe (temporary)",
+        "description": "Click, then switch to another app within 5 seconds. Shows metadata of its focused text field (role, length, selection) — never its content.",
+        "run": "Probe focused field (5 s)",
+        "running": "Switch to the target app now… reading in 5 s",
+        "failed": "Probe failed: {{error}}"
+      },
+      "paths": {
+        "appData": "앱 데이터:",
+        "models": "모델:",
+        "settings": "설정:"
       }
     },
     "about": {
