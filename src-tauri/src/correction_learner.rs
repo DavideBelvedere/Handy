@@ -52,7 +52,8 @@ pub struct LearnOutcome {
 /// `custom_words` is reported in `misfires` instead of learned.
 pub fn learn(inserted: &str, before: &str, after: &str, custom_words: &[String]) -> LearnOutcome {
     let mut outcome = LearnOutcome::default();
-    let inserted = inserted.trim();
+    let inserted = &fold_typography(inserted.trim());
+    let (before, after) = (&fold_typography(before), &fold_typography(after));
     if inserted.is_empty() {
         return outcome;
     }
@@ -145,6 +146,19 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
             true
         }
     }
+}
+
+/// Folds the substitutions apps apply to typed text (smart quotes, NBSP), so
+/// the inserted transcript can still be found in the field.
+fn fold_typography(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            '\u{00A0}' => ' ',
+            c => c,
+        })
+        .collect()
 }
 
 /// Byte offset of the only occurrence of `needle` in `hay`, if exactly one.
@@ -274,7 +288,7 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
     let generation = WATCH_GENERATION.load(Ordering::SeqCst);
     std::thread::spawn(move || {
         let cancelled = || WATCH_GENERATION.load(Ordering::SeqCst) != generation;
-        let needle = inserted.trim();
+        let needle = fold_typography(inserted.trim());
         if needle.is_empty() {
             return;
         }
@@ -291,7 +305,7 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
                     return;
                 }
                 accessibility::enable_manual_accessibility(f.pid());
-                if let Some(v) = f.value().filter(|v| v.contains(needle)) {
+                if let Some(v) = f.value().filter(|v| fold_typography(v).contains(&needle)) {
                     break (f, v);
                 }
             }
@@ -308,15 +322,17 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
             if cancelled() {
                 break;
             }
-            match accessibility::focused_field() {
-                Some(f) if f.same_as(&field) => {}
-                _ => break,
-            }
             if field.is_secure() {
                 return;
             }
-            if let Some(v) = field.value() {
+            // Read before the focus check so a fix followed by a quick switch
+            // is kept; skip empty reads (e.g. a chat box cleared on send).
+            if let Some(v) = field.value().filter(|v| !v.trim().is_empty()) {
                 last = v;
+            }
+            match accessibility::focused_field() {
+                Some(f) if f.same_as(&field) => {}
+                _ => break,
             }
         }
 
@@ -498,6 +514,14 @@ mod tests {
             pairs("I like using Andy for dictation", before, after),
             pair("Andy", "Handy")
         );
+    }
+
+    #[test]
+    fn smart_quotes_and_nbsp_in_field_still_match() {
+        let ins = "I don't like using Andy for dictation";
+        let before = "I don\u{2019}t like\u{00A0}using Andy for dictation";
+        let after = "I don\u{2019}t like\u{00A0}using Handy for dictation";
+        assert_eq!(pairs(ins, before, after), pair("Andy", "Handy"));
     }
 
     #[test]
