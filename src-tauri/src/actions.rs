@@ -3,6 +3,7 @@ use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::{recording_notice_code, AudioRecordingManager};
+use crate::correction_learner;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::policy::{live_decode, LiveDecode, ModelTraits};
@@ -478,6 +479,7 @@ impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
+        correction_learner::cancel_watchers();
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -855,6 +857,9 @@ impl ShortcutAction for TranscribeAction {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let post_process_failed = processed.post_process_failed;
+                                let learn_text = get_settings(&ah)
+                                    .auto_learn_enabled
+                                    .then(|| final_text.clone());
                                 let rm_for_paste = Arc::clone(&rm);
                                 // Taken before the paste thread exists, and so
                                 // before the next session can start.
@@ -884,6 +889,11 @@ impl ShortcutAction for TranscribeAction {
                                                         "Text pasted successfully in {:?}",
                                                         paste_time.elapsed()
                                                     );
+                                                    if let Some(text) = learn_text {
+                                                        correction_learner::spawn_correction_watcher(
+                                                            &ah_clone, text,
+                                                        );
+                                                    }
                                                     // Leave a newer session's notice alone.
                                                     if owns_ui() {
                                                         notices::clear(

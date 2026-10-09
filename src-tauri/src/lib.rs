@@ -10,6 +10,7 @@ mod chinese_script;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod correction_learner;
 pub mod engine_supervisor;
 mod helpers;
 mod input;
@@ -737,6 +738,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_vad_backend_setting,
             shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_scratch_that_enabled_setting,
+            shortcut::change_auto_learn_enabled_setting,
             shortcut::change_chinese_script_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
