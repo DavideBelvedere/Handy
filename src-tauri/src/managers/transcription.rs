@@ -12,6 +12,7 @@ use crate::language_detection::speech::speech_head;
 use crate::language_detection::{
     IdentifyError, LanguageDecision, LanguageDetector, LanguageSource, Plan,
 };
+use crate::live_typing::LiveTyper;
 use crate::managers::audio::{create_smoothed_detector, AudioRecordingManager};
 use crate::managers::model::ModelManager;
 use crate::notices::{self, Notice, NoticeCode, NoticeSource};
@@ -820,8 +821,15 @@ impl TranscriptionManager {
         let (rx, cancelled) = self.router.open();
         self.stream_active.store(false, Ordering::Release);
 
+        // Captured now (right after LiveTyper::begin), not once the worker is
+        // ready, so a late stream can't adopt a newer live session.
+        let live_typer = self.app_handle.try_state::<LiveTyper>().map(|typer| {
+            let typer = typer.inner().clone();
+            let generation = typer.generation();
+            (typer, generation)
+        });
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, cancelled, worker_id));
+        thread::spawn(move || manager.run_stream_worker(rx, cancelled, worker_id, live_typer));
     }
 
     fn run_stream_worker(
@@ -829,6 +837,7 @@ impl TranscriptionManager {
         rx: mpsc::Receiver<StreamCmd>,
         cancelled: Arc<AtomicBool>,
         worker_id: u64,
+        live_typer: Option<(LiveTyper, u64)>,
     ) {
         let _worker = StreamWorkerGuard {
             worker_id,
@@ -874,7 +883,7 @@ impl TranscriptionManager {
             ModelTraits::of(&info),
             get_settings(&self.app_handle).long_form_chunking,
         );
-        let Some(mut session) = LiveSession::begin(self, mode, &info, &model_id) else {
+        let Some(mut session) = LiveSession::begin(self, mode, &info, &model_id, live_typer) else {
             // Nothing to decode live: the recording is transcribed in batch.
             self.router.clear();
             drain_until_finalize(rx);

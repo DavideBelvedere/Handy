@@ -5,7 +5,6 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info};
-use tauri::Manager;
 use transcribe_cpp::StreamOptions;
 
 use super::chunked::{ChunkSetup, ChunkedDecode, PendingSetup};
@@ -43,6 +42,7 @@ impl<'a> LiveSession<'a> {
         mode: LiveDecode,
         info: &LoadedInfo,
         model_id: &str,
+        live_typer: Option<(LiveTyper, u64)>,
     ) -> Option<Self> {
         if mode == LiveDecode::None {
             return None;
@@ -57,7 +57,7 @@ impl<'a> LiveSession<'a> {
                 // A stream's language is fixed before any audio, so it can't
                 // be detected; a detect plan falls back.
                 let setup = tm.setup_for(info, &settings, &plan, &[]);
-                let stream = StreamSession::begin(tm, info, &settings, &setup, model_id)?;
+                let stream = StreamSession::begin(tm, info, &settings, &setup, model_id, live_typer)?;
                 LiveDecoder::Stream(stream, Box::new(setup))
             }
             LiveDecode::Chunked => {
@@ -161,6 +161,7 @@ impl<'a> StreamSession<'a> {
         settings: &AppSettings,
         setup: &RunSetup,
         model_id: &str,
+        live_typer: Option<(LiveTyper, u64)>,
     ) -> Option<Self> {
         let output_language = setup.output_language(settings, None);
 
@@ -172,17 +173,19 @@ impl<'a> StreamSession<'a> {
             let app_handle = tm.app_handle.clone();
             let languages = setup.languages.clone();
             let mut preview_script = PreviewScript::new(settings.chinese_script, &output_language);
-            let live_typer = app_handle
-                .try_state::<LiveTyper>()
-                .map(|typer| typer.inner().clone());
             let live_language = output_language.clone();
             move |progress: StreamProgress| {
                 let mut perf = lock_perf(&perf);
                 perf.record_compute(progress.elapsed);
                 perf.record_update(&progress.update);
                 if let Some(text) = progress.text {
-                    if let Some(typer) = &live_typer {
-                        typer.on_committed(&text.committed, &live_language, &languages);
+                    if let Some((typer, generation)) = &live_typer {
+                        typer.on_committed(
+                            *generation,
+                            &text.committed,
+                            &live_language,
+                            &languages,
+                        );
                     }
                     perf.record_emit();
                     let (committed, tentative) =

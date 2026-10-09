@@ -150,7 +150,7 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
 
 /// Folds the substitutions apps apply to typed text (smart quotes, NBSP), so
 /// the inserted transcript can still be found in the field.
-fn fold_typography(s: &str) -> String {
+pub(crate) fn fold_typography(s: &str) -> String {
     s.chars()
         .map(|c| match c {
             '\u{2018}' | '\u{2019}' => '\'',

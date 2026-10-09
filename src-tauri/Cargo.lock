@@ -2524,6 +2524,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "transcribe-cpp",
+ "unicode-segmentation",
  "webkit2gtk-sys",
  "webview2-com",
  "whatlang",

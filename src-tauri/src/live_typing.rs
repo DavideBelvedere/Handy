@@ -9,16 +9,18 @@
 use crate::accessibility::{self, FocusedField, Utf16Range};
 use crate::audio_toolkit::OutputLanguageEvidence;
 use crate::clipboard::{send_return_key, with_enigo, write_text_to_clipboard};
+use crate::correction_learner::fold_typography;
 use crate::input;
 use crate::managers::transcription::post_process_transcription_text;
 use crate::settings::{get_settings, AppSettings, ClipboardHandling};
 use enigo::{Direction, Key, Keyboard};
 use log::{debug, warn};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Trailing words never typed live: custom-word n-grams reach 3 words, so a
 /// later word can still rewrite them.
@@ -28,10 +30,12 @@ const VERIFY_ATTEMPTS: usize = 5;
 const VERIFY_RETRY: Duration = Duration::from_millis(60);
 
 enum Cmd {
+    /// `generation` 0 = not live.
     Begin {
-        live: bool,
+        generation: u64,
     },
     Committed {
+        generation: u64,
         text: String,
         language: OutputLanguageEvidence,
         languages: Vec<String>,
@@ -54,8 +58,10 @@ pub enum Finish {
 #[derive(Clone)]
 pub struct LiveTyper {
     tx: mpsc::Sender<Cmd>,
-    /// Lets the engine thread skip cloning progress text when nobody types it.
-    live: Arc<AtomicBool>,
+    /// Generation of the live session, 0 when none. A stream captures it at
+    /// start, so text from a cancelled stream never reaches the next session.
+    current: Arc<AtomicU64>,
+    last: Arc<AtomicU64>,
 }
 
 impl LiveTyper {
@@ -64,7 +70,8 @@ impl LiveTyper {
         thread::spawn(move || run(app, rx));
         Self {
             tx,
-            live: Arc::new(AtomicBool::new(false)),
+            current: Arc::new(AtomicU64::new(0)),
+            last: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -72,19 +79,31 @@ impl LiveTyper {
     /// dictation left behind. Never blocks: Accessibility work runs on the
     /// typer thread.
     pub fn begin(&self, live: bool) {
-        self.live.store(live, Ordering::Release);
-        let _ = self.tx.send(Cmd::Begin { live });
+        let generation = if live {
+            self.last.fetch_add(1, Ordering::AcqRel) + 1
+        } else {
+            0
+        };
+        self.current.store(generation, Ordering::Release);
+        let _ = self.tx.send(Cmd::Begin { generation });
+    }
+
+    /// The live session's generation (0 = none), for a stream to capture at start.
+    pub fn generation(&self) -> u64 {
+        self.current.load(Ordering::Acquire)
     }
 
     /// Forwards the stream's raw committed text. Never blocks the engine thread.
     pub fn on_committed(
         &self,
+        generation: u64,
         committed: &str,
         language: &OutputLanguageEvidence,
         languages: &[String],
     ) {
-        if self.live.load(Ordering::Acquire) {
+        if generation != 0 && generation == self.generation() {
             let _ = self.tx.send(Cmd::Committed {
+                generation,
                 text: committed.to_string(),
                 language: language.clone(),
                 languages: languages.to_vec(),
@@ -95,7 +114,7 @@ impl LiveTyper {
     /// Delivers the final text. Blocks until the typer is done, so it must not
     /// run on the main thread (the typer types through it).
     pub fn finish(&self, final_text: String) -> Finish {
-        self.live.store(false, Ordering::Release);
+        self.current.store(0, Ordering::Release);
         let (reply, rx) = mpsc::channel();
         if self.tx.send(Cmd::Finish(final_text, reply)).is_err() {
             return Finish::Fallback;
@@ -105,12 +124,13 @@ impl LiveTyper {
 
     /// Removes the typed text after verifying it. Never blocks.
     pub fn cancel(&self) {
-        self.live.store(false, Ordering::Release);
+        self.current.store(0, Ordering::Release);
         let _ = self.tx.send(Cmd::Cancel);
     }
 }
 
 struct Session {
+    generation: u64,
     target: FocusedField,
     typed: String,
     /// Still typing deltas; cleared when the text diverges or focus moves.
@@ -124,13 +144,18 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
     let mut session: Option<Session> = None;
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            Cmd::Begin { live } => session = begin_session(&app, live),
+            Cmd::Begin { generation } => session = begin_session(&app, generation),
             Cmd::Committed {
+                generation,
                 text,
                 language,
                 languages,
             } => {
-                if let Some(s) = session.as_mut().filter(|s| s.active) {
+                // A cancelled stream's late results belong to an older session.
+                if let Some(s) = session
+                    .as_mut()
+                    .filter(|s| s.active && s.generation == generation)
+                {
                     type_committed(&app, s, text, &language, &languages);
                 }
             }
@@ -150,12 +175,12 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
     }
 }
 
-fn begin_session(app: &AppHandle, live: bool) -> Option<Session> {
+fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
     let settings = get_settings(app);
-    if live || settings.auto_learn_enabled {
+    if generation != 0 || settings.auto_learn_enabled {
         accessibility::enable_manual_accessibility_for_focused_app();
     }
-    if !live {
+    if generation == 0 {
         return None;
     }
     // Chrome/Electron build their AX tree asynchronously after the flag.
@@ -165,6 +190,7 @@ fn begin_session(app: &AppHandle, live: bool) -> Option<Session> {
         return None;
     };
     Some(Session {
+        generation,
         target,
         typed: String::new(),
         active: true,
@@ -215,14 +241,15 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str) -> Finish {
     }
     let (backspaces, insert) = match plan_finish(&s.typed, &text) {
         FinishPlan::Fallback => return Finish::Fallback,
-        FinishPlan::TypeRest(rest) => (0, rest),
-        FinishPlan::Replace => (s.typed.chars().count(), text.clone()),
+        FinishPlan::TypeRest(rest) => (Some(0), rest),
+        FinishPlan::Replace => (backspace_count(&s.typed), text.clone()),
     };
-    let field = if s.poisoned {
-        FieldCheck::Mismatch
-    } else {
-        verify_field(&s.target, &s.typed)
+    // An untrusted backspace count is treated like a mismatch: never delete.
+    let field = match backspaces {
+        Some(_) if !s.poisoned => verify_field(&s.target, &s.typed),
+        _ => FieldCheck::Mismatch,
     };
+    let backspaces = backspaces.unwrap_or(0);
     // Appending deletes nothing, so an unreadable field only needs focus;
     // deleting needs a verified read.
     let may_type =
@@ -273,6 +300,7 @@ fn cancel_session(app: &AppHandle, s: Session) {
     }
     let count = s.typed.chars().count();
     if !s.poisoned
+        && backspace_count(&s.typed).is_some()
         && verify_field(&s.target, &s.typed) == FieldCheck::Verified
         && type_on_main(app, count, "").is_ok()
     {
@@ -418,18 +446,12 @@ fn can_replace(before: &str, selected: Utf16Range, typed: &str) -> bool {
     selected.length == 0 && !typed.is_empty() && units(before).ends_with(&units(typed))
 }
 
-/// Folds smart quotes and NBSP that apps substitute while we type. Each swap is
-/// 1:1 in chars and UTF-16 units, so backspace counts stay exact.
-// shortcut: duplicates correction_learner::fold_typography (private, under review); dedupe once that settles.
-fn fold_typography(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '\u{2018}' | '\u{2019}' => '\'',
-            '\u{201C}' | '\u{201D}' => '"',
-            '\u{00A0}' => ' ',
-            c => c,
-        })
-        .collect()
+/// Backspaces that delete exactly `typed`, or None when it holds a
+/// multi-codepoint grapheme (ZWJ/skin-tone emoji, flag, combining mark): one
+/// Backspace removes a whole grapheme, so a char count would eat user text.
+fn backspace_count(typed: &str) -> Option<usize> {
+    let chars = typed.chars().count();
+    (typed.graphemes(true).count() == chars).then_some(chars)
 }
 
 #[cfg(test)]
@@ -507,6 +529,48 @@ mod tests {
             length: 2,
         };
         assert!(!can_replace("send it", selection, "send it"));
+    }
+
+    #[test]
+    fn backspace_count_refuses_multi_codepoint_graphemes() {
+        assert_eq!(backspace_count("send it"), Some(7));
+        assert_eq!(backspace_count("caffè 😀"), Some(7));
+        assert_eq!(backspace_count(""), Some(0));
+        assert_eq!(backspace_count("ok 👍🏽"), None); // skin tone
+        assert_eq!(backspace_count("👨\u{200D}👩\u{200D}👧"), None); // ZWJ
+        assert_eq!(backspace_count("🇮🇹"), None); // flag
+        assert_eq!(backspace_count("cafe\u{0301}"), None); // combining accent
+    }
+
+    #[test]
+    fn committed_text_only_reaches_the_session_its_stream_started_in() {
+        let (tx, rx) = mpsc::channel();
+        let typer = LiveTyper {
+            tx,
+            current: Arc::new(AtomicU64::new(0)),
+            last: Arc::new(AtomicU64::new(0)),
+        };
+        let committed = |generation| {
+            typer.on_committed(generation, "hi", &OutputLanguageEvidence::Unknown, &[]);
+            rx.try_iter()
+                .filter(|c| matches!(c, Cmd::Committed { .. }))
+                .count()
+        };
+        typer.begin(false);
+        assert_eq!(typer.generation(), 0);
+        assert_eq!(committed(0), 0);
+
+        typer.begin(true);
+        let first = typer.generation();
+        assert_ne!(first, 0);
+        assert_eq!(committed(first), 1);
+
+        typer.cancel();
+        typer.begin(true);
+        let second = typer.generation();
+        assert_ne!(second, first);
+        assert_eq!(committed(first), 0, "cancelled stream's late result");
+        assert_eq!(committed(second), 1);
     }
 
     #[test]
