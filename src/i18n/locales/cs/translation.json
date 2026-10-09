@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "Náhrada pro \"{{word}}\" již existuje"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Detekce hlasové aktivity",
         "description": "Odfiltruje ticho z nahrávek. Modely podporující streaming používají delší doběh VAD; vypnutí VAD nahrává surový zvuk."
@@ -1012,5 +1016,9 @@
     "learnMore": "Jak to vyřešit",
     "recorderBlocked": "Zkratky teď nelze nahrát — Secure Input v macOS blokuje události kláves. Nejprve vyřešte upozornění na Secure Input.",
     "dismiss": "Zavřít"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

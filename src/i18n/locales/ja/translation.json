@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "「{{word}}」の置換は既に存在します"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "音声区間検出 (VAD)",
         "description": "録音から無音部分を除去します。ストリーミング対応モデルはより長い音声検出区間を使用します。VAD を無効にすると音声をそのまま録音します。"
@@ -1012,5 +1016,9 @@
     "learnMore": "解決方法",
     "recorderBlocked": "現在ショートカットを記録できません。macOS の Secure Input がキーイベントをブロックしています。先に Secure Input の警告を解消してください。",
     "dismiss": "閉じる"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

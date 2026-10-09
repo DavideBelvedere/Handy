@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "A replacement for \"{{word}}\" already exists"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "भ्वाइस एक्टिभिटी डिटेक्सन",
         "description": "रेकर्डिङबाट मौनता हटाउँछ। स्ट्रिमिङ-सक्षम मोडेलहरूले लामो VAD टेल प्रयोग गर्छन्; VAD अफ गर्दा कच्चा अडियो रेकर्ड हुन्छ।"
@@ -1012,5 +1016,9 @@
     "learnMore": "यसलाई कसरी ठिक गर्ने",
     "recorderBlocked": "अहिले सर्टकट रेकर्ड गर्न सकिँदैन — macOS Secure Input ले कुञ्जी इभेन्टहरू रोकिरहेको छ। पहिले Secure Input चेतावनी समाधान गर्नुहोस्।",
     "dismiss": "हटाउनुहोस्"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

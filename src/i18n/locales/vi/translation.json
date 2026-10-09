@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "Đã tồn tại thay thế cho \"{{word}}\""
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Phát hiện hoạt động giọng nói",
         "description": "Lọc bỏ khoảng lặng khỏi bản ghi. Các mô hình hỗ trợ truyền trực tiếp dùng đuôi VAD dài hơn; tắt VAD sẽ ghi âm thanh thô."
@@ -1012,5 +1016,9 @@
     "learnMore": "Cách khắc phục",
     "recorderBlocked": "Hiện không thể ghi phím tắt — Secure Input của macOS đang chặn các sự kiện phím. Hãy xử lý cảnh báo Secure Input trước.",
     "dismiss": "Bỏ qua"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

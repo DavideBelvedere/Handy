@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "Já existe uma substituição para \"{{word}}\""
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Detecção de atividade de voz",
         "description": "Filtra o silêncio das gravações. Modelos com suporte a streaming usam uma cauda de VAD mais longa; desativar o VAD grava o áudio bruto."
@@ -1012,5 +1016,9 @@
     "learnMore": "Como resolver isso",
     "recorderBlocked": "Não é possível gravar atalhos agora — o Secure Input do macOS está bloqueando os eventos de tecla. Resolva primeiro o aviso do Secure Input.",
     "dismiss": "Dispensar"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

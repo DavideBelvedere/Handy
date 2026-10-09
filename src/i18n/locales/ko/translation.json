@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "\"{{word}}\"에 대한 바꾸기가 이미 존재합니다"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "음성 활동 감지",
         "description": "녹음에서 무음 구간을 걸러냅니다. 스트리밍 지원 모델은 더 긴 VAD 테일을 사용하며, VAD를 끄면 원본 오디오가 그대로 녹음됩니다."
@@ -1017,5 +1021,9 @@
     "learnMore": "해결 방법",
     "recorderBlocked": "지금은 단축키를 등록할 수 없습니다. macOS Secure Input이 키 이벤트를 차단하고 있습니다. Secure Input 경고를 먼저 해결하세요.",
     "dismiss": "닫기"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

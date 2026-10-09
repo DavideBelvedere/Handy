@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "A replacement for \"{{word}}\" already exists"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Stemmeaktivitetsdetektion",
         "description": "Filtrer stilhed fra optagelser. Streaming-modeller bruger en længere VAD-hale; deaktivering af VAD optager rå lyd."
@@ -1012,5 +1016,9 @@
     "learnMore": "Sådan løser du det",
     "recorderBlocked": "Genveje kan ikke optages lige nu — macOS Secure Input blokerer tastehændelser. Løs advarslen om Secure Input først.",
     "dismiss": "Afvis"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

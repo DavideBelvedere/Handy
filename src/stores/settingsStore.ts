@@ -206,6 +206,8 @@ const settingUpdaters: {
     commands.changeFillerWordRemovalEnabledSetting(value as boolean),
   scratch_that_enabled: (value) =>
     commands.changeScratchThatEnabledSetting(value as boolean),
+  auto_learn_enabled: (value) =>
+    commands.changeAutoLearnEnabledSetting(value as boolean),
   chinese_script: (value) =>
     commands.changeChineseScriptSetting(value as ChineseScript),
   show_tray_icon: (value) =>

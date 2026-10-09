@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "Замяна за „{{word}}“ вече съществува"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Откриване на гласова активност",
         "description": "Филтрира тишината от записите. Моделите с поддръжка на стрийминг използват по-дълга опашка на VAD; изключването на VAD записва необработен звук."
@@ -1012,5 +1016,9 @@
     "learnMore": "Как да поправите това",
     "recorderBlocked": "В момента не могат да се записват бързи клавиши — Secure Input на macOS блокира клавишните събития. Първо отстранете предупреждението за Secure Input.",
     "dismiss": "Отхвърляне"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

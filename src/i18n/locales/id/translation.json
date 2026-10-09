@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "A replacement for \"{{word}}\" already exists"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Deteksi Aktivitas Suara",
         "description": "Saring keheningan dari rekaman. Model yang mendukung streaming menggunakan ekor VAD yang lebih panjang; menonaktifkan VAD akan merekam audio mentah."
@@ -1012,5 +1016,9 @@
     "learnMore": "Cara memperbaiki",
     "recorderBlocked": "Pintasan tidak dapat direkam saat ini — macOS Secure Input memblokir peristiwa tombol. Selesaikan peringatan Secure Input terlebih dahulu.",
     "dismiss": "Tutup"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "Заміна для \"{{word}}\" вже існує"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Виявлення голосової активності",
         "description": "Відфільтровує тишу із записів. Моделі з підтримкою потокової обробки використовують довший «хвіст» VAD; вимкнення VAD записує необроблений звук."
@@ -1012,5 +1016,9 @@
     "learnMore": "Як це виправити",
     "recorderBlocked": "Зараз неможливо записати комбінацію — Secure Input у macOS блокує події клавіш. Спершу усуньте попередження про Secure Input.",
     "dismiss": "Приховати"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

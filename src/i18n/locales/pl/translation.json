@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "Zamiana dla \"{{word}}\" już istnieje"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Wykrywanie aktywności głosowej",
         "description": "Odfiltrowuje ciszę z nagrań. Modele obsługujące streaming używają dłuższego marginesu VAD; wyłączenie VAD nagrywa surowy dźwięk."
@@ -1012,5 +1016,9 @@
     "learnMore": "Jak to naprawić",
     "recorderBlocked": "Nie można teraz nagrać skrótu — Secure Input w macOS blokuje zdarzenia klawiszy. Najpierw rozwiąż ostrzeżenie o Secure Input.",
     "dismiss": "Odrzuć"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

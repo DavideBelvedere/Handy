@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "A replacement for \"{{word}}\" already exists"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "Detecció d'activitat de veu",
         "description": "Filtra els silencis dels enregistraments. Els models compatibles amb la transcripció en temps real utilitzen un marge final de detecció de veu més llarg; si desactiveu la detecció, s'enregistra l'àudio sense filtrar."
@@ -1012,5 +1016,9 @@
     "learnMore": "Com es resol",
     "recorderBlocked": "Ara no se'n poden enregistrar dreceres: l'entrada segura del macOS bloca els esdeveniments de tecla. Resol primer l'avís d'entrada segura.",
     "dismiss": "Descarta"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

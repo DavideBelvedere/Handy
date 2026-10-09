@@ -27,6 +27,7 @@ import { LazyStreamClose } from "../LazyStreamClose";
 import { AirPodsMode } from "../AirPodsMode";
 import { FillerWordRemoval } from "../FillerWordRemoval";
 import { ScratchThat } from "../ScratchThat";
+import { AutoLearn } from "../AutoLearn";
 import { VadBackendSelector } from "../VadBackendSelector";
 
 export const AdvancedSettings: React.FC = () => {
@@ -59,6 +60,7 @@ export const AdvancedSettings: React.FC = () => {
         <ScratchThat descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
         <WordReplacements grouped />
+        <AutoLearn descriptionMode="tooltip" grouped={true} />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

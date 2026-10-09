@@ -603,6 +603,10 @@
         "learned": "Learned",
         "duplicate": "החלפה עבור \"{{word}}\" כבר קיימת"
       },
+      "autoLearn": {
+        "title": "Auto-learn corrections",
+        "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "זיהוי פעילות קולית",
         "description": "סינון שקט מההקלטות. מודלים התומכים בסטרימינג משתמשים בזנב VAD ארוך יותר; ביטול VAD מקליט אודיו גולמי."
@@ -1012,5 +1016,9 @@
     "learnMore": "איך לתקן את זה",
     "recorderBlocked": "לא ניתן להקליט קיצורים כרגע — Secure Input של macOS חוסם אירועי מקשים. פתור תחילה את אזהרת Secure Input.",
     "dismiss": "התעלם"
+  },
+  "autoLearn": {
+    "learned": "Learned: {{from}} → {{to}}",
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
   }
 }

@@ -603,6 +603,10 @@
         "learned": "Appreso",
         "duplicate": "Una sostituzione per \"{{word}}\" esiste già"
       },
+      "autoLearn": {
+        "title": "Apprendi dalle correzioni",
+        "description": "Per circa 60 secondi dopo un dettato, osserva il campo in cui hai scritto e impara coppie esatte di parole dalle correzioni che fai a mano. Le coppie imparate compaiono in Sostituzioni di parole. Solo macOS; non legge mai i campi password."
+      },
       "voiceActivityDetection": {
         "title": "Rilevamento dell'attività vocale",
         "description": "Filtra il silenzio dalle registrazioni. I modelli che supportano lo streaming utilizzano una coda VAD più lunga; disabilitando la VAD si registra l'audio grezzo."
@@ -1012,5 +1016,9 @@
     "learnMore": "Come risolvere",
     "recorderBlocked": "Non è possibile registrare scorciatoie in questo momento: Secure Input di macOS sta bloccando gli eventi dei tasti. Risolvi prima l'avviso di Secure Input.",
     "dismiss": "Ignora"
+  },
+  "autoLearn": {
+    "learned": "Imparato: {{from}} → {{to}}",
+    "misfire": "La parola personalizzata \"{{word}}\" ha sbagliato — rimuovila o abbassa la soglia di correzione?"
   }
 }
