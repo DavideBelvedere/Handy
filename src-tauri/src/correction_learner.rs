@@ -42,7 +42,7 @@ pub struct LearnOutcome {
 /// `before` is the field right after insertion, `after` the field once the
 /// user is done. The inserted span must occur exactly once in `before`; up to
 /// 16 chars on each side of it are anchors that must each occur exactly once
-/// in `after` (an empty anchor means the field edge), otherwise nothing is
+/// in `after` (an empty or blank anchor means the field edge), otherwise nothing is
 /// learned. Edits outside the anchors are therefore ignored.
 ///
 /// The span is word-aligned (LCS); a run of 1..=3 removed words followed by a
@@ -60,8 +60,17 @@ pub fn learn(inserted: &str, before: &str, after: &str, custom_words: &[String])
     let Some(start) = find_unique(before, inserted) else {
         return outcome;
     };
-    let prefix = tail_chars(&before[..start], ANCHOR_CHARS);
-    let suffix = head_chars(&before[start + inserted.len()..], ANCHOR_CHARS);
+    // Whitespace alone (e.g. the trailing space the paste adds) is never
+    // unique, so it counts as the field edge.
+    fn anchor(s: &str) -> &str {
+        if s.trim().is_empty() {
+            ""
+        } else {
+            s
+        }
+    }
+    let prefix = anchor(tail_chars(&before[..start], ANCHOR_CHARS));
+    let suffix = anchor(head_chars(&before[start + inserted.len()..], ANCHOR_CHARS));
 
     let region_start = if prefix.is_empty() {
         0
@@ -341,6 +350,12 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
             return;
         }
         let outcome = learn(&inserted, &before, &last, &settings.custom_words);
+        if outcome == LearnOutcome::default() {
+            debug!(
+                "Auto-learn: no correction to learn (field changed: {})",
+                last != before
+            );
+        }
         let learned: Vec<_> = outcome
             .pairs
             .into_iter()
@@ -395,6 +410,28 @@ mod tests {
         assert_eq!(
             pairs("I really like using Andy for dictation. ", before, after),
             pair("Andy", "Handy")
+        );
+    }
+
+    // The paste appends a trailing space, so whitespace is all that follows.
+    #[test]
+    fn learns_with_trailing_space_after_insert() {
+        let ins = "implement this new picture";
+        assert_eq!(
+            pairs(
+                ins,
+                "Notes: implement this new picture ",
+                "Notes: implement this new feature "
+            ),
+            pair("picture", "feature")
+        );
+        assert_eq!(
+            pairs(
+                ins,
+                "\n implement this new picture ",
+                "\n implement this new feature "
+            ),
+            pair("picture", "feature")
         );
     }
 
