@@ -527,20 +527,40 @@ pub fn remove_filler_words(
     filtered
 }
 
-// The cue only counts as its own clause, so "delete that branch" stays speech.
+// Groups: 1 = the break before the cue ("" at the start), 2 = the cue,
+// 3 = what follows it (punctuation, the end, or the next word).
 static SCRATCH_THAT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(?:^|[.,;!?])\s*(scratch that|delete that)\s*(?:[.,;!?][\s.,;:!?]*|$)")
+    Regex::new(r"(?i)(^|[.,;!?])\s*(scratch that|delete that)\b\s*([.,;!?][\s.,;:!?]*|$|\w+)")
         .unwrap()
 });
 
-/// Drops each "scratch that" / "delete that" cue spoken as its own clause
-/// (between punctuation or text edges) together with the sentence or clause
-/// before it (back to the previous `.?!` or the start of the text).
-// shortcut: English cues, Latin punctuation, and relies on the ASR punctuating the cue; extend per language when needed.
+/// Where the cue ends, if this match is a command. Said as its own clause
+/// (a break on both sides) it always is, so "delete that branch" stays speech.
+/// ASR rarely punctuates after the cue, so "scratch that" right after a break
+/// mid-text is one too when speech follows, except the phrasal verb
+/// ("scratch that off/out").
+fn scratch_that_cue_end(caps: &regex::Captures) -> Option<usize> {
+    let after = caps.get(3).unwrap();
+    let word = after.as_str();
+    if !word.starts_with(|c: char| !".,;!?".contains(c)) {
+        return Some(after.end());
+    }
+    let opens_clause_mid_text = !caps[1].is_empty();
+    let literal = word.eq_ignore_ascii_case("off") || word.eq_ignore_ascii_case("out");
+    (opens_clause_mid_text && caps[2].eq_ignore_ascii_case("scratch that") && !literal)
+        .then_some(after.start())
+}
+
+/// Drops each "scratch that" / "delete that" command cue (see
+/// [`scratch_that_cue_end`]) together with the sentence or clause before it
+/// (back to the previous `.?!` or the start of the text).
+// shortcut: English cues, Latin punctuation, and relies on the ASR putting a break before the cue (no pause timing); use word timings when the engine exposes them.
 pub fn apply_scratch_that(text: &str) -> String {
     let mut text = text.to_string();
-    while let Some(caps) = SCRATCH_THAT_PATTERN.captures(&text) {
-        let (cue_start, cue_end) = (caps.get(1).unwrap().start(), caps.get(0).unwrap().end());
+    while let Some((cue_start, cue_end)) = SCRATCH_THAT_PATTERN
+        .captures_iter(&text)
+        .find_map(|caps| Some((caps.get(2).unwrap().start(), scratch_that_cue_end(&caps)?)))
+    {
         let before = text[..cue_start].trim_end();
         // Strip the terminator closing the dropped sentence, then keep everything up to the one before it.
         let before = before.trim_end_matches(['.', '?', '!']);
@@ -611,9 +631,27 @@ mod tests {
             "Can you delete that branch before merging",
             "I'll scratch that off the list",
             "Done. Delete that file",
+            "Milk is done. Scratch that off the list.",
+            "Scratch that idea for now",
+            "That plan is bad. I'll scratch that.",
         ] {
             assert_eq!(apply_scratch_that(speech), speech);
         }
+    }
+
+    // Real dictations: the ASR puts a break before the cue but none after it.
+    #[test]
+    fn scratch_that_after_a_break_needs_no_punctuation_after() {
+        assert_eq!(
+            apply_scratch_that(
+                "Okay, let's try to implement some stuff. Scratch that implement this new feature"
+            ),
+            "implement this new feature"
+        );
+        assert_eq!(
+            apply_scratch_that("Keep this. Send it Thursday, scratch that send it Friday."),
+            "Keep this. send it Friday."
+        );
     }
 
     #[test]
