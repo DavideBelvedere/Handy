@@ -2163,4 +2163,36 @@ mod tests {
         assert!(!out.contains("secret"));
         assert!(out.contains("[REDACTED]"));
     }
+
+    /// Manual: needs Apple Intelligence enabled on this Mac. Prints how the
+    /// backtrack prompt rewrites real ASR outputs (test-audio group B/A).
+    #[test]
+    #[ignore]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    fn backtrack_prompt_with_apple_intelligence() {
+        assert!(crate::apple_intelligence::check_apple_intelligence_availability());
+        let system = match std::env::var("BACKTRACK_PROMPT_FILE") {
+            Ok(f) => std::fs::read_to_string(f).unwrap(),
+            Err(_) => default_backtrack_prompt().prompt.replace("${output}", ""),
+        };
+        for text in [
+            "Let's meet on Thursday, no Friday",
+            "Send it to John. I mean Mark",
+            "Send it to John Mark",
+            "I actually liked that movie.",
+            "Call me at five sorry at six",
+            "Please delete that branch before merging.",
+            "Buy milk scratch that buy bread",
+            "The total is three point five million, roughly forty percent more than last year.",
+            "Book the room for Monday no wait Tuesday",
+            "I need two copies sorry three copies of the form",
+            "Honestly I actually prefer the second option",
+            "Please send me the invoice by tomorrow",
+            "Ask Anna, I mean Laura, to join the call",
+        ] {
+            let out =
+                crate::apple_intelligence::process_text_with_system_prompt(system.trim(), text, 0);
+            println!("{text:?} -> {out:?}");
+        }
+    }
 }
