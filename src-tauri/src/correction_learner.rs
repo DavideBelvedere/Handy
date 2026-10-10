@@ -102,6 +102,15 @@ pub fn learn(inserted: &str, before: &str, after: &str, custom_words: &[String])
         if from_words.len() > MAX_PHRASE_WORDS || to_words.len() > MAX_PHRASE_WORDS {
             continue;
         }
+        // At the field edge, words typed after fixing the last word join the
+        // fix's run ("Andy" -> "Handy app"), so a growing tail run is unsafe.
+        if suffix.is_empty()
+            && to_words.len() > from_words.len()
+            && old.ends_with(&from_words)
+            && new.ends_with(&to_words)
+        {
+            continue;
+        }
         let from = trim_punct(&from_words.join(" ")).to_string();
         let to = trim_punct(&to_words.join(" ")).to_string();
         let (from_key, to_key) = (normalize(&from), normalize(&to));
@@ -432,6 +441,17 @@ mod tests {
                 "\n implement this new feature "
             ),
             pair("picture", "feature")
+        );
+    }
+
+    // At the field edge, words typed after the fix join its run.
+    #[test]
+    fn ignores_words_typed_after_a_fix_at_the_field_edge() {
+        let ins = "I like Andy";
+        assert!(pairs(ins, "I like Andy ", "I like Handy app ").is_empty());
+        assert_eq!(
+            pairs(ins, "I like Andy ", "I like Handy "),
+            pair("Andy", "Handy")
         );
     }
 
