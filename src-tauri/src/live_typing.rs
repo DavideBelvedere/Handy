@@ -185,9 +185,9 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
     }
     // Chrome/Electron build their AX tree asynchronously after the flag.
     thread::sleep(Duration::from_millis(200));
-    let Some(target) = accessibility::focused_field().filter(|f| {
-        !f.is_secure() && is_text_target(f.role().as_deref(), f.selected_range().is_some())
-    }) else {
+    let Some(target) = accessibility::focused_field()
+        .filter(|f| !f.is_secure() && is_text_target(f.role().as_deref()))
+    else {
         debug!("Live typing: no non-secure focused text field; using normal paste");
         return None;
     };
@@ -426,14 +426,14 @@ fn next_delta(typed: &str, stable: &str) -> Delta {
     }
 }
 
-/// A text role, or any element exposing a text cursor. Keystrokes on other
-/// elements (a web page, a Finder list) fire single-key shortcuts instead.
-fn is_text_target(role: Option<&str>, has_selection_range: bool) -> bool {
-    has_selection_range
-        || matches!(
-            role,
-            Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField")
-        )
+/// Text roles only: keystrokes on other elements (a web page, a Finder list)
+/// fire single-key shortcuts. A selection range is no proof, since a focused
+/// web page can report one with no input focused.
+fn is_text_target(role: Option<&str>) -> bool {
+    matches!(
+        role,
+        Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField")
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -510,13 +510,13 @@ mod tests {
     #[test]
     fn is_text_target_table() {
         for role in ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"] {
-            assert!(is_text_target(Some(role), false), "{role}");
+            assert!(is_text_target(Some(role)), "{role}");
         }
-        assert!(is_text_target(Some("AXWebArea"), true));
-        assert!(is_text_target(None, true));
-        assert!(!is_text_target(Some("AXWebArea"), false));
-        assert!(!is_text_target(Some("AXList"), false));
-        assert!(!is_text_target(None, false));
+        // Web pages, lists and unknown roles are rejected even when they
+        // report a selection range: the role alone decides.
+        for role in [Some("AXWebArea"), Some("AXList"), Some("AXGroup"), None] {
+            assert!(!is_text_target(role), "{role:?}");
+        }
     }
 
     #[test]
