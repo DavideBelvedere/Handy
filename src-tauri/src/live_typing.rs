@@ -1,6 +1,6 @@
 //! Live typing: while a streaming dictation runs, types its stable prefix into
 //! the focused field, then fixes the field up at the end with a verified
-//! replace. Text is only ever deleted after Accessibility confirms it is still
+//! replace of the part that differs from the final text. Text is only ever deleted after Accessibility confirms it is still
 //! the text we typed, right before the cursor, in the same field.
 //!
 //! Without an Accessibility target (non-macOS, unreadable field) no session
@@ -244,7 +244,9 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str) -> Finish {
     let (backspaces, insert) = match plan_finish(&s.typed, &text) {
         FinishPlan::Fallback => return Finish::Fallback,
         FinishPlan::TypeRest(rest) => (Some(0), rest),
-        FinishPlan::Replace => (backspace_count(&s.typed), text.clone()),
+        FinishPlan::Replace { keep } => {
+            (backspace_count(&s.typed[keep..]), text[keep..].to_string())
+        }
     };
     // An untrusted backspace count is treated like a mismatch: never delete.
     let field = match backspaces {
@@ -479,7 +481,11 @@ fn is_text_target(role: Option<&str>) -> bool {
 enum FinishPlan {
     Fallback,
     TypeRest(String),
-    Replace,
+    /// Delete what was typed after its first `keep` bytes (the graphemes it
+    /// shares with the final text), then type the rest of the final text.
+    Replace {
+        keep: usize,
+    },
 }
 
 fn plan_finish(typed: &str, final_text: &str) -> FinishPlan {
@@ -488,7 +494,14 @@ fn plan_finish(typed: &str, final_text: &str) -> FinishPlan {
     }
     match final_text.strip_prefix(typed) {
         Some(rest) => FinishPlan::TypeRest(rest.to_string()),
-        None => FinishPlan::Replace,
+        None => FinishPlan::Replace {
+            keep: typed
+                .graphemes(true)
+                .zip(final_text.graphemes(true))
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| a.len())
+                .sum(),
+        },
     }
 }
 
@@ -576,10 +589,22 @@ mod tests {
         );
         assert_eq!(
             plan_finish("send it Thursday", "send it Friday"),
-            FinishPlan::Replace
+            FinishPlan::Replace { keep: 8 }
         );
-        assert_eq!(plan_finish("hello world", "hello"), FinishPlan::Replace);
-        assert_eq!(plan_finish("buy milk", ""), FinishPlan::Replace);
+        assert_eq!(
+            plan_finish("hello world", "hello"),
+            FinishPlan::Replace { keep: 5 }
+        );
+        assert_eq!(plan_finish("buy milk", ""), FinishPlan::Replace { keep: 0 });
+        assert_eq!(
+            plan_finish("The fairy to", "The ferry to Kilashanda Harbour "),
+            FinishPlan::Replace { keep: 5 }
+        );
+        // Never split a grapheme: "e" + combining accent differs from plain "e".
+        assert_eq!(
+            plan_finish("cafe x", "cafe\u{0301} y"),
+            FinishPlan::Replace { keep: 3 }
+        );
     }
 
     #[test]
