@@ -1153,6 +1153,42 @@ impl AppSettings {
             .iter_mut()
             .find(|provider| provider.id == provider_id)
     }
+
+    /// Auto-learned targets the ASR keeps spelling differently: name-like
+    /// (an uppercase letter, 5+ letters) and the target of 2+ learned pairs
+    /// ("Van der Muren", "Van der Muhlen" -> "Vandermeulen"). An exact pair
+    /// never catches the next variant, so these join the fuzzy custom-word
+    /// matcher at runtime; `custom_words` itself is not changed.
+    // shortcut: 2+ pairs is the only "not a common word" evidence we have; a capitalized sentence-start fix learned twice still qualifies. Use a word list if that shows up.
+    pub fn learned_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for r in self.word_replacements.iter().filter(|r| r.learned) {
+            let name_like = r.to.chars().any(char::is_uppercase)
+                && r.to.chars().filter(|c| c.is_alphabetic()).count() >= 5;
+            let pairs = self
+                .word_replacements
+                .iter()
+                .filter(|o| o.learned && o.to == r.to)
+                .count();
+            let known = |w: &String| w.eq_ignore_ascii_case(&r.to);
+            if name_like
+                && pairs >= 2
+                && !self.custom_words.iter().any(known)
+                && !names.iter().any(known)
+            {
+                names.push(r.to.clone());
+            }
+        }
+        names
+    }
+
+    /// The words the fuzzy matcher corrects towards: `custom_words` plus
+    /// [`Self::learned_names`].
+    pub fn fuzzy_words(&self) -> Vec<String> {
+        let mut words = self.custom_words.clone();
+        words.extend(self.learned_names());
+        words
+    }
 }
 
 /// Startup entry point. Same load-or-create/salvage/migrate behavior as
@@ -1494,6 +1530,49 @@ pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pairs auto-learned in the dictation eval: each mishearing became its own
+    // pair, so the next variant (rc1-rc8) still came out wrong.
+    #[test]
+    fn learned_names_catch_new_variants_of_names_learned_twice() {
+        let mut settings = get_default_settings();
+        settings.custom_words = vec!["Ollama".into()];
+        settings.word_replacements = [
+            ("test", "text"),
+            ("forecasted", "forecast"),
+            ("Van der Muren", "Vandermeulen"),
+            ("Van der Muhlen", "Vandermeulen"),
+            ("Oconquo Brandt", "Okonkwo-Brandt"),
+            ("Okonco Brand", "Okonkwo-Brandt"),
+            ("Kilashandra", "Killashandra"),
+            ("Holama", "Ollama"),
+            ("Holloma", "Ollama"),
+            ("Tessarun", "Thessaroon"),
+        ]
+        .map(|(from, to)| WordReplacement {
+            from: from.into(),
+            to: to.into(),
+            learned: true,
+        })
+        .to_vec();
+
+        assert_eq!(
+            settings.learned_names(),
+            vec!["Vandermeulen".to_string(), "Okonkwo-Brandt".to_string()]
+        );
+        let fix = |text: &str| {
+            crate::audio_toolkit::apply_custom_words(text, &settings.fuzzy_words(), 0.18)
+        };
+        assert_eq!(
+            fix("meet the Van der Mullen family"),
+            "meet the Vandermeulen family"
+        );
+        assert_eq!(
+            fix("Oconko Brant will inspect it"),
+            "Okonkwo-Brandt will inspect it"
+        );
+        assert_eq!(fix("we ran the test again"), "we ran the test again");
+    }
 
     #[test]
     fn word_replacement_stored_without_learned_flag_loads_as_manual() {

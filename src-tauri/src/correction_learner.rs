@@ -358,7 +358,7 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
         if !settings.auto_learn_enabled {
             return;
         }
-        let outcome = learn(&inserted, &before, &last, &settings.custom_words);
+        let outcome = learn(&inserted, &before, &last, &settings.fuzzy_words());
         if outcome == LearnOutcome::default() {
             debug!(
                 "Auto-learn: no correction to learn (field changed: {})",

@@ -1693,12 +1693,14 @@ pub(crate) fn post_process_transcription_text(
             raw
         };
 
-        let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
-            apply_custom_words(
-                &raw,
-                &settings.custom_words,
-                settings.word_correction_threshold,
-            )
+        // Learned names are never part of a decode prompt, so they apply either way.
+        let fuzzy_words = if custom_words_already_prompted {
+            settings.learned_names()
+        } else {
+            settings.fuzzy_words()
+        };
+        let corrected = if !fuzzy_words.is_empty() {
+            apply_custom_words(&raw, &fuzzy_words, settings.word_correction_threshold)
         } else {
             raw
         };
