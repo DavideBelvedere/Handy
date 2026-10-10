@@ -984,17 +984,6 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         }
     }
 
-    if !settings
-        .post_process_prompts
-        .iter()
-        .any(|p| p.id == "default_backtrack")
-    {
-        settings
-            .post_process_prompts
-            .push(default_backtrack_prompt());
-        changed = true;
-    }
-
     changed
 }
 
@@ -1402,6 +1391,21 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    // One-time backtrack prompt migration: `scratch_that_enabled` arrived with
+    // the prompt, so its absence marks a store that predates both. Gated so a
+    // user who deletes the prompt doesn't get it back on the next read.
+    if settings_value.get("scratch_that_enabled").is_none()
+        && !settings
+            .post_process_prompts
+            .iter()
+            .any(|p| p.id == "default_backtrack")
+    {
+        settings
+            .post_process_prompts
+            .push(default_backtrack_prompt());
+        updated = true;
+    }
+
     updated
 }
 
@@ -1786,22 +1790,34 @@ mod tests {
     }
 
     #[test]
-    fn ensure_post_process_defaults_adds_missing_backtrack_prompt() {
+    fn backtrack_prompt_migration_adds_prompt_once_to_old_stores() {
+        let count = |s: &AppSettings| {
+            s.post_process_prompts
+                .iter()
+                .filter(|p| p.id == "default_backtrack")
+                .count()
+        };
         let mut settings = get_default_settings();
         settings
             .post_process_prompts
             .retain(|p| p.id != "default_backtrack");
 
-        assert!(ensure_post_process_defaults(&mut settings));
-        assert_eq!(
-            settings
-                .post_process_prompts
-                .iter()
-                .filter(|p| p.id == "default_backtrack")
-                .count(),
-            1
-        );
-        assert!(!ensure_post_process_defaults(&mut settings));
+        // Store from before this feature: gets the prompt, and only once.
+        let old = serde_json::json!({ "selected_model": "" });
+        apply_settings_migrations(&mut settings, &old);
+        assert_eq!(count(&settings), 1);
+        apply_settings_migrations(&mut settings, &old);
+        assert_eq!(count(&settings), 1);
+
+        // Current store whose user deleted the prompt: it stays deleted,
+        // through migrations and the every-read defaults pass.
+        settings
+            .post_process_prompts
+            .retain(|p| p.id != "default_backtrack");
+        let current = serde_json::json!({ "selected_model": "", "scratch_that_enabled": true });
+        apply_settings_migrations(&mut settings, &current);
+        ensure_post_process_defaults(&mut settings);
+        assert_eq!(count(&settings), 0);
     }
 
     #[test]
@@ -2089,7 +2105,8 @@ mod tests {
             "overlay_style": "live",
             "chinese_script": "as_transcribed",
             "transcribe_accelerator": "gpu",
-            "transcribe_gpu_device": settings.transcribe_gpu_device
+            "transcribe_gpu_device": settings.transcribe_gpu_device,
+            "scratch_that_enabled": true
         });
 
         assert!(!apply_settings_migrations(&mut settings, &raw));
