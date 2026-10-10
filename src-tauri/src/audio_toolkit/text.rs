@@ -571,15 +571,20 @@ fn clause_words(text: &str) -> Vec<String> {
 }
 
 /// Whether `rest` (the words after the cue) restates `dropped` (the sentence
-/// the cue would drop): same first word, and at least one more of its first
-/// six words also occurs in `dropped`. "the pipeline runs nightly" restates
-/// "The pipeline runs highly on staging"; "buy bread" does not restate "buy milk".
-fn restates(dropped: &str, rest: &str) -> bool {
+/// the cue would drop): same first word, and at least `shared` more of its
+/// first six words also occur in `dropped`. "the pipeline runs nightly"
+/// restates "The pipeline runs highly on staging"; "buy bread" does not
+/// restate "buy milk".
+fn restates(dropped: &str, rest: &str, shared: usize) -> bool {
     let (dropped, rest) = (clause_words(dropped), clause_words(rest));
     match (dropped.first(), rest.first()) {
-        (Some(a), Some(b)) if a == b => rest[1..rest.len().min(6)]
-            .iter()
-            .any(|w| dropped[1..].contains(w)),
+        (Some(a), Some(b)) if a == b => {
+            rest[1..rest.len().min(6)]
+                .iter()
+                .filter(|w| dropped[1..].contains(w))
+                .count()
+                >= shared
+        }
         _ => false,
     }
 }
@@ -610,7 +615,10 @@ fn scratch_that_cue_end(text: &str, caps: &regex::Captures) -> Option<usize> {
     let dropped = &dropped[last_sentence_start(dropped)..];
     let rest = &text[after.start()..];
     let rest = &rest[..rest.find(['.', '?', '!']).unwrap_or(rest.len())];
-    ((after_break && is_scratch) || restates(dropped, rest)).then_some(after.start())
+    // "delete that" + words is ordinary speech far more often ("I can delete that I can
+    // do it later"), so it needs a stronger restatement.
+    let shared = if is_scratch { 1 } else { 2 };
+    ((after_break && is_scratch) || restates(dropped, rest, shared)).then_some(after.start())
 }
 
 /// Drops each "scratch that" / "delete that" command cue (see
@@ -766,6 +774,7 @@ mod tests {
             "the pipeline is slow scratch that the paint",
             "Please delete that file from the folder",
             "Scratch that idea for now",
+            "I can delete that I can do it later",
         ] {
             assert_eq!(apply_scratch_that(speech), speech);
         }
