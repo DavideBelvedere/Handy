@@ -331,9 +331,10 @@ enum FieldCheck {
 
 fn verify_field(target: &FocusedField, typed: &str) -> FieldCheck {
     let len = typed.encode_utf16().count();
-    let mut read_any = false;
+    let mut last_read = None;
     for attempt in 0..VERIFY_ATTEMPTS {
         if !on_target(target) {
+            debug!("Live typing: verify failed, focus moved");
             return FieldCheck::Mismatch;
         }
         if let (Some(before), Some(selected)) =
@@ -342,17 +343,55 @@ fn verify_field(target: &FocusedField, typed: &str) -> FieldCheck {
             if can_replace(&before, selected, typed) {
                 return FieldCheck::Verified;
             }
-            read_any = true;
+            last_read = Some((before, selected));
         }
         if attempt + 1 < VERIFY_ATTEMPTS {
             thread::sleep(VERIFY_RETRY);
         }
     }
-    if read_any {
-        FieldCheck::Mismatch
-    } else {
-        FieldCheck::Unreadable
+    match last_read {
+        Some((before, selected)) => {
+            debug!(
+                "Live typing: verify failed, {}",
+                mismatch_summary(&before, selected, typed)
+            );
+            FieldCheck::Mismatch
+        }
+        None => {
+            debug!("Live typing: verify failed, field unreadable");
+            FieldCheck::Unreadable
+        }
     }
+}
+
+/// Why `before` failed [`can_replace`], in numbers and character classes only:
+/// field text must never reach the log.
+fn mismatch_summary(before: &str, selected: Utf16Range, typed: &str) -> String {
+    let units = |s: &str| fold_typography(s).encode_utf16().collect::<Vec<u16>>();
+    let (field, ours) = (units(before), units(typed));
+    let same = field
+        .iter()
+        .rev()
+        .zip(ours.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let class = |u: Option<&u16>| match u.map(|&u| char::from_u32(u.into())) {
+        None => "none",
+        Some(Some('\n' | '\r' | '\u{2028}' | '\u{2029}')) => "newline",
+        Some(Some(c)) if c.is_whitespace() => "space",
+        Some(Some(c)) if c.is_alphanumeric() => "alnum",
+        Some(Some(c)) if c.is_ascii_punctuation() => "punct",
+        _ => "other",
+    };
+    format!(
+        "read {} of {} UTF-16 units, {} match back from the cursor, then field={} typed={}, selection length {}",
+        field.len(),
+        ours.len(),
+        same,
+        class(field.iter().rev().nth(same)),
+        class(ours.iter().rev().nth(same)),
+        selected.length
+    )
 }
 
 /// Sends `backspaces` Backspace clicks, then types `text`, on the main thread
@@ -555,6 +594,18 @@ mod tests {
             length: 2,
         };
         assert!(!can_replace("send it", selection, "send it"));
+    }
+
+    #[test]
+    fn mismatch_summary_has_no_field_text() {
+        assert_eq!(
+            mismatch_summary("send\nit", no_selection(), "send it"),
+            "read 7 of 7 UTF-16 units, 2 match back from the cursor, then field=newline typed=space, selection length 0"
+        );
+        assert_eq!(
+            mismatch_summary("it", no_selection(), "send it"),
+            "read 2 of 7 UTF-16 units, 2 match back from the cursor, then field=none typed=space, selection length 0"
+        );
     }
 
     #[test]
