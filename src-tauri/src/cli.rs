@@ -61,4 +61,16 @@ pub struct CliArgs {
     /// Emit --transcribe-file results as JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Developer test: run --transcribe-file through the live streaming path
+    /// (feed + finalize) instead of batch. No VAD, and frames arrive in one
+    /// burst (real time with --live-type), so results can differ from the app's.
+    #[arg(long, hide = true)]
+    pub stream: bool,
+
+    /// Developer test: with --stream, feed the WAV in real time and live-type
+    /// the result into the focused text field, as a dictation would; then keep
+    /// auto-learn watching the field for SECS seconds (default 0).
+    #[arg(long, requires = "stream", hide = true, value_name = "SECS", num_args = 0..=1, default_missing_value = "0")]
+    pub live_type: Option<u64>,
 }

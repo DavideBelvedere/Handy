@@ -610,7 +610,43 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
             }
         }
         let t = Instant::now();
-        match tm.transcribe(samples.clone()) {
+        let result = if args.stream {
+            let typer = app.try_state::<live_typing::LiveTyper>();
+            if let Some(typer) = &typer {
+                typer.begin(true);
+            }
+            tm.start_stream();
+            let router = tm.stream_router();
+            // 30 ms frames, the size the recorder's Silero VAD hands the router.
+            for frame in samples.chunks(480) {
+                router.feed(frame);
+                if typer.is_some() {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+            }
+            match tm.finalize_stream() {
+                Ok(Some(out)) => {
+                    if let Some(typer) = &typer {
+                        let finish = typer.finish(out.clone());
+                        eprintln!("live typing: {finish:?}");
+                        let watch_secs = args.live_type.unwrap_or(0);
+                        if finish == live_typing::Finish::Handled
+                            && watch_secs > 0
+                            && get_settings(app).auto_learn_enabled
+                        {
+                            correction_learner::spawn_correction_watcher(app, out.clone());
+                            std::thread::sleep(std::time::Duration::from_secs(watch_secs));
+                        }
+                    }
+                    Ok(out)
+                }
+                Ok(None) => Err(anyhow::anyhow!("model did not produce a stream result")),
+                Err(e) => Err(e),
+            }
+        } else {
+            tm.transcribe(samples.clone())
+        };
+        match result {
             Ok(out) => text = out,
             Err(e) => {
                 eprintln!("error: transcribe failed: {}", e);
@@ -982,6 +1018,10 @@ pub fn run(cli_args: CliArgs) {
                 managers::transcription::report_compute_devices(&transcription_manager);
                 app_handle.manage(model_manager);
                 app_handle.manage(transcription_manager);
+                if cli_args.live_type.is_some() {
+                    app_handle.manage(input::EnigoState::new().expect("Failed to initialize Enigo"));
+                    app_handle.manage(live_typing::LiveTyper::new(app_handle.clone()));
+                }
 
                 let handle = app_handle.clone();
                 let args = cli_args.clone();
