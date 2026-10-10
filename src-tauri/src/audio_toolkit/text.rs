@@ -527,16 +527,21 @@ pub fn remove_filler_words(
     filtered
 }
 
-static SCRATCH_THAT_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b(?:scratch that|delete that)\b[\s.,;:!?]*").unwrap());
+// The cue only counts as its own clause, so "delete that branch" stays speech.
+static SCRATCH_THAT_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(?:^|[.,;!?])\s*(scratch that|delete that)\s*(?:[.,;!?][\s.,;:!?]*|$)")
+        .unwrap()
+});
 
-/// Drops each "scratch that" / "delete that" cue together with the sentence or
-/// clause before it (back to the previous `.?!` or the start of the text).
-// shortcut: English cues and Latin sentence terminators only, extend per language when needed.
+/// Drops each "scratch that" / "delete that" cue spoken as its own clause
+/// (between punctuation or text edges) together with the sentence or clause
+/// before it (back to the previous `.?!` or the start of the text).
+// shortcut: English cues, Latin punctuation, and relies on the ASR punctuating the cue; extend per language when needed.
 pub fn apply_scratch_that(text: &str) -> String {
     let mut text = text.to_string();
-    while let Some(cue) = SCRATCH_THAT_PATTERN.find(&text) {
-        let before = text[..cue.start()].trim_end();
+    while let Some(caps) = SCRATCH_THAT_PATTERN.captures(&text) {
+        let (cue_start, cue_end) = (caps.get(1).unwrap().start(), caps.get(0).unwrap().end());
+        let before = text[..cue_start].trim_end();
         // Strip the terminator closing the dropped sentence, then keep everything up to the one before it.
         let before = before.trim_end_matches(['.', '?', '!']);
         let mut kept_end = 0;
@@ -548,7 +553,7 @@ pub fn apply_scratch_that(text: &str) -> String {
             }
         }
         let kept = &before[..kept_end];
-        let rest = &text[cue.end()..];
+        let rest = &text[cue_end..];
         text = match (kept.is_empty(), rest.is_empty()) {
             (_, true) => kept.to_string(),
             (true, false) => rest.to_string(),
@@ -600,11 +605,19 @@ mod tests {
     }
 
     #[test]
-    fn scratch_that_without_terminators_drops_back_to_last_sentence() {
-        assert_eq!(
-            apply_scratch_that("Hello there. buy milk scratch that buy bread"),
-            "Hello there. buy bread"
-        );
+    fn scratch_that_needs_its_own_clause() {
+        for speech in [
+            "Hello there. buy milk scratch that buy bread",
+            "Can you delete that branch before merging",
+            "I'll scratch that off the list",
+            "Done. Delete that file",
+        ] {
+            assert_eq!(apply_scratch_that(speech), speech);
+        }
+    }
+
+    #[test]
+    fn scratch_that_comma_clause_drops_back_to_last_sentence() {
         assert_eq!(
             apply_scratch_that("buy milk, scratch that, buy bread"),
             "buy bread"
@@ -623,12 +636,16 @@ mod tests {
             "Keep this."
         );
         assert_eq!(apply_scratch_that("buy milk. scratch that"), "");
+        assert_eq!(
+            apply_scratch_that("See you Thursday. Make it Friday. Scratch that."),
+            "See you Thursday."
+        );
     }
 
     #[test]
     fn scratch_that_repeated_cues_chain_backwards() {
         assert_eq!(
-            apply_scratch_that("One. Two. Three. scratch that scratch that Four."),
+            apply_scratch_that("One. Two. Three. Scratch that. Scratch that. Four."),
             "One. Four."
         );
     }
