@@ -532,12 +532,48 @@ static SCRATCH_THAT_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(scratch that|delete that)\b\s*([.,;!?][\s.,;:!?]*|$|\w+)").unwrap()
 });
 
+/// Byte offset where the last sentence of `before` starts: just after the
+/// last `.?!` followed by whitespace, or 0.
+fn last_sentence_start(before: &str) -> usize {
+    let mut start = 0;
+    let mut chars = before.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if matches!(c, '.' | '?' | '!') && chars.peek().is_some_and(|(_, n)| n.is_whitespace()) {
+            start = i + c.len_utf8();
+        }
+    }
+    start
+}
+
+fn clause_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(build_match_key)
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Whether `rest` (the words after the cue) restates `dropped` (the sentence
+/// the cue would drop): same first word, and at least one more of its first
+/// six words also occurs in `dropped`. "the pipeline runs nightly" restates
+/// "The pipeline runs highly on staging"; "buy bread" does not restate "buy milk".
+fn restates(dropped: &str, rest: &str) -> bool {
+    let (dropped, rest) = (clause_words(dropped), clause_words(rest));
+    match (dropped.first(), rest.first()) {
+        (Some(a), Some(b)) if a == b => rest[1..rest.len().min(6)]
+            .iter()
+            .any(|w| dropped[1..].contains(w)),
+        _ => false,
+    }
+}
+
 /// Where the cue ends, if this match is a command rather than speech.
 /// - Closing its clause (punctuation or the end after it): "scratch that" is a
 ///   command anywhere ("Try to scratch that."); "delete that" only after a break.
-/// - Followed by more words: only "scratch that" opening a clause mid-text
-///   (ASR rarely punctuates after the cue), except the phrasal verb
-///   ("scratch that off/out"). "delete that branch" stays speech.
+/// - Followed by more words: "scratch that" opening a clause mid-text (ASR
+///   rarely punctuates after the cue), or either cue when the words after it
+///   restate the sentence it drops (ASR often punctuates neither side:
+///   "runs highly on staging scratch that the pipeline runs nightly"). Never
+///   the phrasal verb ("scratch that off/out"); "delete that branch" stays speech.
 fn scratch_that_cue_end(text: &str, caps: &regex::Captures) -> Option<usize> {
     let (cue, after) = (caps.get(1).unwrap(), caps.get(2).unwrap());
     let before = text[..cue.start()].trim_end();
@@ -549,12 +585,20 @@ fn scratch_that_cue_end(text: &str, caps: &regex::Captures) -> Option<usize> {
         return (after_break || is_scratch).then_some(after.end());
     }
     let literal = word.eq_ignore_ascii_case("off") || word.eq_ignore_ascii_case("out");
-    (after_break && !at_start && is_scratch && !literal).then_some(after.start())
+    if at_start || literal {
+        return None;
+    }
+    let dropped = before.trim_end_matches(['.', '?', '!', ',', ';']);
+    let dropped = &dropped[last_sentence_start(dropped)..];
+    let rest = &text[after.start()..];
+    let rest = &rest[..rest.find(['.', '?', '!']).unwrap_or(rest.len())];
+    ((after_break && is_scratch) || restates(dropped, rest)).then_some(after.start())
 }
 
 /// Drops each "scratch that" / "delete that" command cue (see
 /// [`scratch_that_cue_end`]) together with the sentence or clause before it
-/// (back to the previous `.?!` or the start of the text).
+/// (back to the previous `.?!` or the start of the text). What follows the cue
+/// inherits the dropped sentence's capital when it now opens a sentence.
 // shortcut: English cues, Latin punctuation, no pause timing: a sentence that merely ends in "scratch that" is treated as the command; use word timings when the engine exposes them.
 pub fn apply_scratch_that(text: &str) -> String {
     let mut text = text.to_string();
@@ -569,21 +613,16 @@ pub fn apply_scratch_that(text: &str) -> String {
         let before = text[..cue_start].trim_end();
         // Strip the terminator closing the dropped sentence, then keep everything up to the one before it.
         let before = before.trim_end_matches(['.', '?', '!']);
-        let mut kept_end = 0;
-        let mut chars = before.char_indices().peekable();
-        while let Some((i, c)) = chars.next() {
-            if matches!(c, '.' | '?' | '!') && chars.peek().is_some_and(|(_, n)| n.is_whitespace())
-            {
-                kept_end = i + c.len_utf8();
-            }
-        }
-        let kept = &before[..kept_end];
+        let start = last_sentence_start(before);
+        let dropped_capital = before[start..].trim_start().starts_with(char::is_uppercase);
+        let mut kept = before[..start].to_string();
         let rest = &text[cue_end..];
-        text = match (kept.is_empty(), rest.is_empty()) {
-            (_, true) => kept.to_string(),
-            (true, false) => rest.to_string(),
-            (false, false) => format!("{kept} {rest}"),
-        };
+        if !kept.is_empty() && !rest.is_empty() {
+            kept.push(' ');
+        }
+        let mut capital_owed = dropped_capital && opens_sentence(&kept);
+        push_restoring_capital(&mut kept, rest, &mut capital_owed);
+        text = kept;
     }
     text
 }
@@ -651,11 +690,11 @@ mod tests {
             apply_scratch_that(
                 "Okay, let's try to implement some stuff. Scratch that implement this new feature"
             ),
-            "implement this new feature"
+            "Implement this new feature"
         );
         assert_eq!(
             apply_scratch_that("Keep this. Send it Thursday, scratch that send it Friday."),
-            "Keep this. send it Friday."
+            "Keep this. Send it Friday."
         );
     }
 
@@ -670,6 +709,48 @@ mod tests {
             apply_scratch_that("Hello there. Send it to John scratch that"),
             "Hello there."
         );
+    }
+
+    // Real dictations (dictation eval s1, s2, s3, sc2): no break on one or
+    // both sides of the cue, but the words after it restate the dropped sentence.
+    #[test]
+    fn scratch_that_followed_by_a_restatement_is_a_command() {
+        for (raw, want) in [
+            (
+                "The pipeline runs highly on staging scratch that the pipeline runs nightly on production",
+                "The pipeline runs nightly on production",
+            ),
+            (
+                "The adjuster approved the claim yesterday scratch that the adjuster is still reviewing the claim",
+                "The adjuster is still reviewing the claim",
+            ),
+            (
+                "Flood cover is fifty thousand. Delete that flood cover is one hundred thousand dollars",
+                "Flood cover is one hundred thousand dollars",
+            ),
+            (
+                "We are visiting the coast in June. Delete that we are visiting the mountains in September",
+                "We are visiting the mountains in September",
+            ),
+            (
+                "Keep this. The hotel is booked for Friday delete that the hotel is booked for Saturday.",
+                "Keep this. The hotel is booked for Saturday.",
+            ),
+        ] {
+            assert_eq!(apply_scratch_that(raw), want, "{raw}");
+        }
+    }
+
+    #[test]
+    fn restatement_needs_more_than_the_first_word() {
+        for speech in [
+            "buy milk scratch that buy bread",
+            "the pipeline is slow scratch that the paint",
+            "Please delete that file from the folder",
+            "Scratch that idea for now",
+        ] {
+            assert_eq!(apply_scratch_that(speech), speech);
+        }
     }
 
     #[test]
