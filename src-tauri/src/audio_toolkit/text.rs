@@ -118,6 +118,24 @@ fn find_best_match<'a>(
             && supports_soundex(&custom_word_key.key)
             && soundex(candidate, &custom_word_key.key);
 
+        // One edit in a short word is often another real word ("clause" vs
+        // "Claude"): there, edit distance alone is not enough, the consonants
+        // must agree (first letter aside: "jemini" still finds "Gemini").
+        if !phonetic_match
+            && levenshtein_dist > 0
+            && max_len <= 6.0
+            && supports_soundex(candidate)
+            && supports_soundex(&custom_word_key.key)
+        {
+            let first = custom_word_key.key.chars().next().unwrap();
+            let aligned: String = std::iter::once(first)
+                .chain(candidate.chars().skip(1))
+                .collect();
+            if !soundex(&aligned, &custom_word_key.key) {
+                continue;
+            }
+        }
+
         // Combine scores: favor phonetic matches, but also consider string similarity
         let combined_score = if phonetic_match {
             levenshtein_score * 0.3 // Give significant boost to phonetic matches
@@ -1267,6 +1285,36 @@ mod tests {
             !result.contains("GPT-44"),
             "got double-counted result: {}",
             result
+        );
+    }
+
+    // Dictation eval m1: "clause" became the custom word "Claude" (one edit in
+    // six letters, different consonants) at the default threshold.
+    #[test]
+    fn test_apply_custom_words_short_word_needs_matching_consonants() {
+        let custom_words: Vec<String> = [
+            "Databricks",
+            "Claude",
+            "Antigravity",
+            "Parakeet",
+            "Whisper",
+            "Gemini",
+            "VsCode",
+            "Ollama",
+            "LangChain",
+            "LangGraph",
+            "Vercel",
+            "Supabase",
+            "Playwright",
+        ]
+        .map(String::from)
+        .to_vec();
+        let text = "Please send me the text of the policy clause before the call";
+        assert_eq!(apply_custom_words(text, &custom_words, 0.18), text);
+        // Same consonants still match, even with a misheard first letter.
+        assert_eq!(
+            apply_custom_words("ask jemini and versel", &custom_words, 0.18),
+            "ask Gemini and Vercel"
         );
     }
 
