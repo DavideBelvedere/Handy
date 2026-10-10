@@ -635,7 +635,7 @@
       },
       "scratchThat": {
         "title": "Scratch that",
-        "description": "Dicendo \"scratch that\" o \"cancella quello\" viene rimossa la frase precedente."
+        "description": "Dire \"scratch that\" o \"delete that\" come frase a sé rimuove la frase precedente."
       },
       "chineseScript": {
         "title": "Scrittura cinese",
@@ -649,7 +649,7 @@
       },
       "liveTyping": {
         "title": "Digitazione in tempo reale",
-        "description": "Il testo compare nel campo attivo mentre parli. Funziona solo con la scorciatoia in modalità toggle e con i modelli in streaming. Solo macOS."
+        "description": "Il testo compare nel campo attivo mentre parli. Funziona solo con la scorciatoia in modalità toggle, con i modelli in streaming e con un Metodo di Incollaggio diverso da \"Nessuno\". Solo macOS."
       }
     },
     "postProcessing": {

@@ -635,7 +635,7 @@
       },
       "scratchThat": {
         "title": "Scratch that",
-        "description": "Saying \"scratch that\" or \"delete that\" removes the preceding sentence."
+        "description": "Saying \"scratch that\" or \"delete that\" as its own phrase removes the preceding sentence."
       },
       "chineseScript": {
         "title": "简繁转换",
@@ -649,7 +649,7 @@
       },
       "liveTyping": {
         "title": "Live typing",
-        "description": "Text appears in the focused field while you speak. Works only in toggle shortcut mode and with streaming models. macOS only."
+        "description": "Text appears in the focused field while you speak. Works only in toggle shortcut mode, with streaming models, and with a Paste Method other than \"None\". macOS only."
       }
     },
     "postProcessing": {
