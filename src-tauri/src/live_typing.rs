@@ -185,8 +185,10 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
     }
     // Chrome/Electron build their AX tree asynchronously after the flag.
     thread::sleep(Duration::from_millis(200));
-    let Some(target) = accessibility::focused_field().filter(|f| !f.is_secure()) else {
-        debug!("Live typing: no readable, non-secure focused field; using normal paste");
+    let Some(target) = accessibility::focused_field().filter(|f| {
+        !f.is_secure() && is_text_target(f.role().as_deref(), f.selected_range().is_some())
+    }) else {
+        debug!("Live typing: no non-secure focused text field; using normal paste");
         return None;
     };
     Some(Session {
@@ -246,6 +248,8 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str) -> Finish {
     };
     // An untrusted backspace count is treated like a mismatch: never delete.
     let field = match backspaces {
+        // Nothing left to type: the field already holds the whole output.
+        Some(0) if insert.is_empty() && !s.poisoned => FieldCheck::Verified,
         Some(_) if !s.poisoned => verify_field(&s.target, &s.typed),
         _ => FieldCheck::Mismatch,
     };
@@ -422,6 +426,16 @@ fn next_delta(typed: &str, stable: &str) -> Delta {
     }
 }
 
+/// A text role, or any element exposing a text cursor. Keystrokes on other
+/// elements (a web page, a Finder list) fire single-key shortcuts instead.
+fn is_text_target(role: Option<&str>, has_selection_range: bool) -> bool {
+    has_selection_range
+        || matches!(
+            role,
+            Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField")
+        )
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum FinishPlan {
     Fallback,
@@ -491,6 +505,18 @@ mod tests {
             Delta::Diverged
         );
         assert_eq!(next_delta("hello", "Hello world"), Delta::Diverged);
+    }
+
+    #[test]
+    fn is_text_target_table() {
+        for role in ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"] {
+            assert!(is_text_target(Some(role), false), "{role}");
+        }
+        assert!(is_text_target(Some("AXWebArea"), true));
+        assert!(is_text_target(None, true));
+        assert!(!is_text_target(Some("AXWebArea"), false));
+        assert!(!is_text_target(Some("AXList"), false));
+        assert!(!is_text_target(None, false));
     }
 
     #[test]
