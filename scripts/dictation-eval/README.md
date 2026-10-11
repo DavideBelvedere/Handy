@@ -2,6 +2,16 @@
 
 Tooling to measure how well Handy turns speech into the right text, and to track whether changes (or auto-learn) improve it. Written for the agent whose job is to improve the code so these cases pass more often. A human must read phrases aloud for a full run; the rest can be done offline (see "Measuring without a human").
 
+## Status (2026-10-11): retest pending
+
+**The next step is a human retest of both suites; nothing after `408085c` has been verified by one.** Iteration 2 did not measure the intended setup (custom prompt selected, risky learned pairs still active; see "Iteration 2 results"), and the code fixes since then (`408085c` fuzzy matcher, the eval's freeze-on-history page) are checked only by unit tests and `eval.sh asr`.
+
+Before the retest the user must, in the installed Handy (`scripts/install-macos.sh` builds and installs this checkout; grant Accessibility again after each install):
+1. Settings > Post-processing: select "Clean + resolve self-corrections" (`default_backtrack`).
+2. Settings > Word Replacements: delete `test -> text`, `with pet -> we expect`, `forecasted -> forecast` (in the UI: editing the settings file while Handy runs gets overwritten).
+
+Then follow "Next iteration (checklist)", re-using the current `phrases.json` (skip `gen`) so the result compares directly with iteration 2. Check in the reports: the pp run says it used `default_backtrack`, `guard` passes, `recordings` is 1 per phrase, and q7/q8/q9 are no longer frozen before the final text. Update this section with the outcome.
+
 ## The two suites
 
 A human dictates the same kind of phrases under two Handy shortcuts. Never mix them: the grader flags a run read with the wrong shortcut.
@@ -123,7 +133,7 @@ Plain 29% (10/34): newterm 0/6, recurring 4/14 LOOSE (p12, p14, p16, p17 right f
 
 1. In Handy: Settings > Post-processing, select **"Clean + resolve self-corrections"** (the custom prompt can be re-selected afterwards). In Settings > Word Replacements delete `test -> text`, `with pet -> we expect`, `forecasted -> forecast`.
 2. Make sure the build under test is current (`bun run tauri dev` rebuilds on save; otherwise `cd src-tauri && cargo build`).
-3. `eval.sh gen` (new `guard` category, plain scratch restatement phrase, no "like" in plain).
+3. `eval.sh gen` only for a fresh set; for the pending retest keep the current `phrases.json` to compare with iteration 2.
 4. `eval.sh serve plain`, then `eval.sh grade`; `eval.sh serve pp`, then `eval.sh grade`. Use Skip instead of restarting a phrase.
 5. `eval.sh cases && eval.sh asr` (learning check on the same audio), `eval.sh trend`.
 6. Compare with the iteration 1 rows above; look at `runs/<run>/logs/` for any phrase with lost words or restarts.
