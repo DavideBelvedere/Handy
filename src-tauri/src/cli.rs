@@ -68,6 +68,11 @@ pub struct CliArgs {
     #[arg(long, hide = true)]
     pub stream: bool,
 
+    /// Developer test: with --stream, feed the WAV in real time (as the mic
+    /// does) without live typing.
+    #[arg(long, requires = "stream", hide = true)]
+    pub realtime: bool,
+
     /// Developer test: with --stream, feed the WAV in real time and live-type
     /// the result into the focused text field, as a dictation would; then keep
     /// auto-learn watching the field for SECS seconds (default 0).

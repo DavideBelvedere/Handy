@@ -620,7 +620,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
             // 30 ms frames, the size the recorder's Silero VAD hands the router.
             for frame in samples.chunks(480) {
                 router.feed(frame);
-                if typer.is_some() {
+                if typer.is_some() || args.realtime {
                     std::thread::sleep(std::time::Duration::from_millis(30));
                 }
             }
