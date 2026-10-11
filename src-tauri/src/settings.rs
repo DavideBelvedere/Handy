@@ -1172,7 +1172,10 @@ impl AppSettings {
     pub fn learned_names(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for r in self.word_replacements.iter().filter(|r| r.learned) {
-            let name_like = r.to.chars().any(char::is_uppercase)
+            // One word only: a phrase target ("Killashandra harbor") would rewrite
+            // whatever follows "Killashandra" (eval p9, p10).
+            let name_like = !r.to.contains(char::is_whitespace)
+                && r.to.chars().any(char::is_uppercase)
                 && r.to.chars().filter(|c| c.is_alphabetic()).count() >= 5;
             let pairs = self
                 .word_replacements
@@ -1591,6 +1594,27 @@ mod tests {
             "Okonkwo-Brandt will inspect it"
         );
         assert_eq!(fix("we ran the test again"), "we ran the test again");
+        // A phrase target is never fuzzy-matched.
+        let mut with_phrase = settings.clone();
+        with_phrase.word_replacements.extend(
+            [
+                ("Kilashandra harbour", "Killashandra harbor"),
+                ("Kilashanda Harbour", "Killashandra harbor"),
+            ]
+            .map(|(from, to)| WordReplacement {
+                from: from.into(),
+                to: to.into(),
+                learned: true,
+            }),
+        );
+        assert_eq!(
+            crate::audio_toolkit::apply_custom_words(
+                "Killashandra scored twice",
+                &with_phrase.fuzzy_words(),
+                0.18
+            ),
+            "Killashandra scored twice"
+        );
     }
 
     #[test]

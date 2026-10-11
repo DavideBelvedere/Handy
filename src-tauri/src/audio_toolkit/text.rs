@@ -65,6 +65,9 @@ fn supports_soundex(key: &str) -> bool {
     !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic())
 }
 
+/// Above this edit ratio a Soundex agreement is a shared prefix, not a sound-alike.
+const MAX_PHONETIC_EDIT_RATIO: f64 = 0.4;
+
 /// Finds the best matching custom word for a candidate string
 ///
 /// Uses Levenshtein distance and Soundex phonetic matching to find
@@ -136,8 +139,12 @@ fn find_best_match<'a>(
             }
         }
 
-        // Combine scores: favor phonetic matches, but also consider string similarity
-        let combined_score = if phonetic_match {
+        // Combine scores: favor phonetic matches, but also consider string similarity.
+        // Soundex codes only the first four consonants, so it agrees with any word
+        // that shares a prefix ("call the" / "Claude", "lunch on" / "LangChain"):
+        // the boost only applies to spellings already fairly close ("parquet" /
+        // "Parakeet" is 0.375).
+        let combined_score = if phonetic_match && levenshtein_score <= MAX_PHONETIC_EDIT_RATIO {
             levenshtein_score * 0.3 // Give significant boost to phonetic matches
         } else {
             levenshtein_score
@@ -210,6 +217,20 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
             if let Some((replacement, score)) =
                 find_best_match(&ngram, custom_words, &custom_word_match_keys, threshold)
             {
+                // An extra word must pull its weight: "in Databricks" is one edit
+                // from "Databricks" only because it swallows the word "in".
+                let (first, last) = (
+                    build_ngram(&ngram_words[1..]),
+                    build_ngram(&ngram_words[..n - 1]),
+                );
+                let swallows = n > 1
+                    && [first, last].iter().any(|sub| {
+                        find_best_match(sub, custom_words, &custom_word_match_keys, threshold)
+                            .is_some_and(|(r, sub_score)| r == replacement && sub_score <= score)
+                    });
+                if swallows {
+                    continue;
+                }
                 let is_better = best_match
                     .as_ref()
                     .is_none_or(|(_, _, best_score)| score < *best_score);
@@ -1325,6 +1346,47 @@ mod tests {
             apply_custom_words("ask jemini and versel", &custom_words, 0.18),
             "ask Gemini and Vercel"
         );
+    }
+
+    // Dictation eval p1, p26: a neighbouring word was swallowed by an n-gram match.
+    #[test]
+    fn test_apply_custom_words_never_swallows_a_neighbouring_word() {
+        let words = vec!["Databricks".to_string(), "LangChain".to_string()];
+        for text in [
+            "We store the inventory in Databricks now",
+            "arrived before lunch on Tuesday",
+        ] {
+            let fixed = apply_custom_words(text, &words, 0.18);
+            assert_eq!(
+                fixed.split_whitespace().count(),
+                text.split_whitespace().count(),
+                "{fixed}"
+            );
+        }
+    }
+
+    // Dictation eval iteration 2 (p1, q7, q15): Soundex agreed on a shared prefix
+    // and the 0.3 boost accepted words up to 60% different.
+    #[test]
+    fn test_apply_custom_words_phonetic_boost_needs_close_spelling() {
+        let custom_words: Vec<String> = ["LangChain", "Claude", "Parakeet", "Vandermeulen"]
+            .map(String::from)
+            .to_vec();
+        for text in [
+            "The invoice arrived before lunch on Tuesday",
+            "I'll call the repair company today",
+        ] {
+            assert_eq!(apply_custom_words(text, &custom_words, 0.18), text);
+        }
+        for (heard, fixed) in [
+            (
+                "meet the Van der Mullen family",
+                "meet the Vandermeulen family",
+            ),
+            ("the Parquet model", "the Parakeet model"),
+        ] {
+            assert_eq!(apply_custom_words(heard, &custom_words, 0.18), fixed);
+        }
     }
 
     #[test]
