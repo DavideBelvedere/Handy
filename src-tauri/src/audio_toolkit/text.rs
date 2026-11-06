@@ -676,6 +676,271 @@ pub fn apply_scratch_that(text: &str) -> String {
     text
 }
 
+/// What a spoken correction may swap: the old and new value must be the same kind.
+#[derive(Clone, Copy, PartialEq)]
+enum ValueKind {
+    Number,
+    Weekday,
+    RelativeDay,
+    Month,
+    Name,
+}
+
+/// Which values a cue may correct.
+#[derive(Clone, Copy, PartialEq)]
+enum CueRule {
+    /// "anzi", "sorry", "actually": numbers and dates.
+    Values,
+    /// "volevo dire", "I mean": also names ("a Marco, volevo dire, a Matteo").
+    AlsoNames,
+    /// "cioè" also clarifies ("alle 15, cioè alle 3"): only two weekdays or
+    /// two months, which can't both be meant.
+    DatesOnly,
+    /// Bare "no": the old value right before it ("sabato no domenica").
+    Adjacent,
+}
+
+/// Longest first, so "no anzi" wins over "no".
+const CORRECTION_CUES: &[(&[&str], CueRule)] = &[
+    (&["sorry", "i", "meant"], CueRule::AlsoNames),
+    (&["scusa", "volevo", "dire"], CueRule::AlsoNames),
+    (&["no", "anzi"], CueRule::Values),
+    (&["no", "aspetta"], CueRule::Values),
+    (&["no", "wait"], CueRule::Values),
+    // ASR often hears "no wait" as "now wait".
+    (&["now", "wait"], CueRule::Values),
+    (&["volevo", "dire"], CueRule::AlsoNames),
+    (&["i", "mean"], CueRule::AlsoNames),
+    (&["i", "meant"], CueRule::AlsoNames),
+    (&["anzi"], CueRule::Values),
+    (&["scusa"], CueRule::Values),
+    (&["sorry"], CueRule::Values),
+    (&["actually"], CueRule::Values),
+    (&["cioè"], CueRule::DatesOnly),
+    (&["no"], CueRule::Adjacent),
+];
+
+const WEEKDAYS: &[&str] = &[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "lunedì",
+    "martedì",
+    "mercoledì",
+    "giovedì",
+    "venerdì",
+    "sabato",
+    "domenica",
+];
+const RELATIVE_DAYS: &[&str] = &[
+    "today",
+    "tomorrow",
+    "yesterday",
+    "oggi",
+    "domani",
+    "dopodomani",
+    "ieri",
+];
+const MONTHS: &[&str] = &[
+    "january",
+    "february",
+    "march",
+    "april",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "gennaio",
+    "febbraio",
+    "marzo",
+    "aprile",
+    "maggio",
+    "giugno",
+    "luglio",
+    "agosto",
+    "settembre",
+    "ottobre",
+    "novembre",
+    "dicembre",
+];
+
+/// Digits ("10", "10:30", "3.000", "$20") or an English / Italian number word
+/// ("twenty-five", "tremila", "ventidue"). Not "a"/"un"/"una": articles.
+static NUMBER_WORD: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"^(?:[$€£]?\d+(?:[.,:]\d+)*[%€]?",
+        r"|(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)(?:-(?:one|two|three|four|five|six|seven|eight|nine))?",
+        r"|(?:uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|tredici|quattordici|quindici|sedici|diciassette|diciotto|diciannove|venti?|trenta?|quaranta?|cinquanta?|sessanta?|settanta?|ottanta?|novanta?|cento|mille|mila)+)$"
+    ))
+    .unwrap()
+});
+
+/// A word lowercased with the punctuation around it trimmed ("Marco," -> "marco").
+fn correction_key(word: &str) -> String {
+    word.trim_matches(|c: char| !c.is_alphanumeric() && !"$€£%".contains(c))
+        .to_lowercase()
+}
+
+/// `words[i]` as a value, if it is one. A name is a capitalized word that
+/// doesn't open a sentence.
+fn value_kind(words: &[(usize, &str)], i: usize) -> Option<ValueKind> {
+    let key = correction_key(words[i].1);
+    if NUMBER_WORD.is_match(&key) {
+        Some(ValueKind::Number)
+    } else if WEEKDAYS.contains(&key.as_str()) {
+        Some(ValueKind::Weekday)
+    } else if RELATIVE_DAYS.contains(&key.as_str()) {
+        Some(ValueKind::RelativeDay)
+    } else if MONTHS.contains(&key.as_str()) {
+        Some(ValueKind::Month)
+    } else if words[i].1.starts_with(char::is_uppercase)
+        && i > 0
+        && !words[i - 1].1.ends_with(['.', '?', '!'])
+        && key != "i"
+        && !key.starts_with("i'")
+    {
+        Some(ValueKind::Name)
+    } else {
+        None
+    }
+}
+
+/// Italian elides "a"/"e" before a vowel: "a marzo, cioè ad aprile".
+fn same_lead_word(a: &str, b: &str) -> bool {
+    let base = |w: String| match w.as_str() {
+        "ad" => "a".to_string(),
+        "ed" => "e".to_string(),
+        _ => w,
+    };
+    base(correction_key(a)) == base(correction_key(b))
+}
+
+/// The byte range a spoken correction takes back, if the cue at `words[cue]`
+/// (`len` words long) is one. The shape is `[lead] OLD [tail] cue [lead] NEW
+/// [tail]`: OLD and NEW the same kind of value and different, lead (at most two
+/// words, e.g. "alle", "on") said again before NEW or not at all, and the tail
+/// after OLD (at most three words, e.g. "copies") said again after NEW.
+/// "Siamo in quattro, cioè io e tre colleghi" has no such shape and stays.
+fn correction_span(
+    text: &str,
+    words: &[(usize, &str)],
+    cue: usize,
+    len: usize,
+    rule: CueRule,
+) -> Option<(usize, usize)> {
+    let after = cue + len;
+    let new = (after..words.len().min(after + 3)).find(|&i| value_kind(words, i).is_some())?;
+    let kind = value_kind(words, new)?;
+    let allowed = match rule {
+        CueRule::AlsoNames => true,
+        CueRule::DatesOnly => matches!(kind, ValueKind::Weekday | ValueKind::Month),
+        CueRule::Values | CueRule::Adjacent => kind != ValueKind::Name,
+    };
+    let old_last = (cue.saturating_sub(4)..cue)
+        .rev()
+        .find(|&i| value_kind(words, i) == Some(kind))?;
+    // A number can span words: "ten thirty", "one hundred".
+    let joined = |i: usize| {
+        kind == ValueKind::Number
+            && value_kind(words, i) == Some(kind)
+            && !words[i].1.ends_with([',', '.', ';', ':'])
+    };
+    let mut old = old_last;
+    while old > 0 && joined(old - 1) {
+        old -= 1;
+    }
+    let mut new_last = new;
+    while new_last + 1 < words.len()
+        && joined(new_last)
+        && value_kind(words, new_last + 1) == Some(kind)
+    {
+        new_last += 1;
+    }
+    let key = |r: std::ops::RangeInclusive<usize>| {
+        words[r]
+            .iter()
+            .map(|(_, w)| correction_key(w))
+            .collect::<Vec<_>>()
+    };
+    let tail = old_last + 1..cue;
+    let lead = new - after;
+    if !allowed
+        || (rule == CueRule::Adjacent && !tail.is_empty())
+        || old < lead
+        || key(old..=old_last) == key(new..=new_last)
+        // "Is it Monday? No, Tuesday": an answer, not a correction.
+        || words[old..cue].iter().any(|(_, w)| w.contains('?'))
+    {
+        return None;
+    }
+    let tail_repeated = tail.clone().enumerate().all(|(o, i)| {
+        words
+            .get(new_last + 1 + o)
+            .is_some_and(|(_, w)| correction_key(w) == correction_key(words[i].1))
+    });
+    let lead_repeated =
+        (0..lead).all(|o| same_lead_word(words[old - lead + o].1, words[after + o].1));
+    let start = old - lead;
+    // "Lunedì no, martedì sì": a contrast, not a correction.
+    let contrast = words
+        .get(new_last + 1 + tail.len())
+        .is_some_and(|(_, w)| ["sì", "si", "yes", "no"].contains(&correction_key(w).as_str()));
+    // "Non è sabato, no, è domenica" / "not on Monday, actually on Tuesday".
+    let negated = start > 0 && {
+        let prev = correction_key(words[start - 1].1);
+        prev == "non" || prev == "not" || prev.ends_with("n't")
+    };
+    (tail_repeated && lead_repeated && !contrast && !negated)
+        .then(|| (words[start].0, words[after].0))
+        .filter(|&(s, e)| s < e && e <= text.len())
+}
+
+/// Resolves spoken corrections of a value, in English and Italian: "alle 10,
+/// no anzi, alle undici" -> "alle undici", "on Tuesday sorry Wednesday" ->
+/// "on Wednesday", "a Marco, volevo dire, a Matteo" -> "a Matteo". Only when
+/// the cue sits between two values of the same kind (see [`correction_span`]);
+/// a restatement without a cue ("giovedì venerdì") is left to the LLM prompt,
+/// since lists and ranges look the same ("lunedì martedì e giovedì").
+// shortcut: fixed cue and value lists, no free-form swaps ("the garlic I mean the onions"); those stay with the LLM.
+pub fn apply_spoken_corrections(text: &str) -> String {
+    let mut text = text.to_string();
+    loop {
+        let words: Vec<(usize, &str)> = text
+            .split_whitespace()
+            .map(|w| (w.as_ptr() as usize - text.as_ptr() as usize, w))
+            .collect();
+        let span = (1..words.len()).find_map(|cue| {
+            CORRECTION_CUES.iter().find_map(|(cue_words, rule)| {
+                let matches = cue + cue_words.len() < words.len()
+                    && cue_words
+                        .iter()
+                        .enumerate()
+                        .all(|(o, c)| correction_key(words[cue + o].1) == *c);
+                matches
+                    .then(|| correction_span(&text, &words, cue, cue_words.len(), *rule))
+                    .flatten()
+            })
+        });
+        drop(words);
+        let Some((start, end)) = span else {
+            return text;
+        };
+        let kept = &text[..start];
+        let mut capital_owed =
+            text[start..].starts_with(char::is_uppercase) && opens_sentence(kept);
+        let mut out = kept.to_string();
+        push_restoring_capital(&mut out, &text[end..], &mut capital_owed);
+        text = out;
+    }
+}
+
 /// Applies non-filler transcription cleanup.
 ///
 /// Kept separate from [`remove_filler_words`] so disabling filler deletion
@@ -852,6 +1117,121 @@ mod tests {
             apply_scratch_that("Nothing to see here."),
             "Nothing to see here."
         );
+    }
+
+    // Real Nemotron / Parakeet output (dictation eval, selfcorr.jsonl).
+    #[test]
+    fn spoken_correction_keeps_the_new_value() {
+        for (raw, want) in [
+            (
+                "Ci vediamo alle 10, no anzi, alle undici davanti all'ufficio.",
+                "Ci vediamo alle undici davanti all'ufficio.",
+            ),
+            (
+                "La riunione lunedì, scusa, martedì pomeriggio.",
+                "La riunione martedì pomeriggio.",
+            ),
+            (
+                "Mandalo a Marco, volevo dire, a Matteo entro stasera.",
+                "Mandalo a Matteo entro stasera.",
+            ),
+            (
+                "preventivo è di duemila euro anzi tremila euro",
+                "preventivo è di tremila euro",
+            ),
+            (
+                "volo è sabato no domenica mattina",
+                "volo è domenica mattina",
+            ),
+            (
+                "Partiamo a marzo, cioè ad aprile, dopo la chiusura del bilancio.",
+                "Partiamo ad aprile, dopo la chiusura del bilancio.",
+            ),
+            (
+                "Il volo parte alle 10:30 no anzi alle 11:15 da Linate",
+                "Il volo parte alle 11:15 da Linate",
+            ),
+            (
+                "Mandala domani no aspetta dopodomani in mattinata",
+                "Mandala dopodomani in mattinata",
+            ),
+            (
+                "Paolo arriva il 12 scusa il 14 di maggio",
+                "Paolo arriva il 14 di maggio",
+            ),
+            (
+                "The adjuster will visit on Wednesday actually on Thursday morning",
+                "The adjuster will visit on Thursday morning",
+            ),
+            (
+                "We are meeting the plumber on Tuesday. Now wait on Wednesday morning",
+                "We are meeting the plumber on Wednesday morning",
+            ),
+            (
+                "I need twenty dollars. No wait forty dollars for the tile cleaner",
+                "I need forty dollars for the tile cleaner",
+            ),
+            (
+                "The dentist appointment is at ten thirty I mean eleven so set your alarm",
+                "The dentist appointment is at eleven so set your alarm",
+            ),
+            (
+                "It costs two hundred dollars sorry three hundred dollars a month",
+                "It costs three hundred dollars a month",
+            ),
+            (
+                "The storage units cost $1,200 sorry $1,400 a month.",
+                "The storage units cost $1,400 a month.",
+            ),
+            (
+                "Ask Anna, I mean Laura, to join the call",
+                "Ask Laura, to join the call",
+            ),
+        ] {
+            assert_eq!(apply_spoken_corrections(raw), want, "{raw}");
+        }
+    }
+
+    #[test]
+    fn spoken_corrections_chain_and_restore_the_capital() {
+        assert_eq!(
+            apply_spoken_corrections(
+                "We are hosting the party on Saturday no on Sunday I need six chairs sorry I meant eight chairs"
+            ),
+            "We are hosting the party on Sunday I need eight chairs"
+        );
+        assert_eq!(
+            apply_spoken_corrections("Tre copie, scusa, quattro copie del contratto."),
+            "Quattro copie del contratto."
+        );
+    }
+
+    #[test]
+    fn spoken_correction_cues_in_ordinary_speech_stay() {
+        for speech in [
+            "Non è caro, anzi costa poco",
+            "Scusa Giulia, mi passi il file del contratto?",
+            "Siamo in quattro, cioè io e tre colleghi",
+            "La consegna è domani, cioè giovedì",
+            "Alle 15, cioè alle 3 del pomeriggio",
+            "Lunedì no, martedì sì",
+            "Ho tre figli, cioè due maschi e una femmina",
+            "Scusa, alle dieci non posso, facciamo alle undici",
+            "Non è sabato, no, è domenica",
+            "Ho parlato con Luca, scusa Marco, ti richiamo dopo",
+            "I actually liked that movie.",
+            "I'm sorry, I was late on Monday",
+            "I mean, Friday works too",
+            "Monday no, Tuesday yes",
+            "Is it Monday? No, Tuesday.",
+            "It's not on Monday, actually on Tuesday we rest",
+            "We're open Monday to Friday, not Saturday",
+            "Tell John I mean it, Sarah",
+            "We met on Monday. Actually on Monday we also signed",
+            "Il negozio è aperto lunedì martedì e giovedì",
+        ] {
+            assert_eq!(apply_spoken_corrections(speech), speech);
+        }
     }
 
     #[test]

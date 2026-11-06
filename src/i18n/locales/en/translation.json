@@ -643,7 +643,7 @@
       },
       "scratchThat": {
         "title": "Scratch that",
-        "description": "Saying \"scratch that\" or \"delete that\" as its own phrase removes the preceding sentence."
+        "description": "Saying \"scratch that\" or \"delete that\" as its own phrase removes the preceding sentence. A value you correct with a cue (\"Tuesday, sorry, Wednesday\", \"alle 10, anzi alle 11\") keeps only the new one."
       },
       "chineseScript": {
         "title": "Chinese Script",

@@ -643,7 +643,7 @@
       },
       "scratchThat": {
         "title": "Scratch that",
-        "description": "Dire \"scratch that\" o \"delete that\" come frase a sé rimuove la frase precedente."
+        "description": "Dire \"scratch that\" o \"delete that\" come frase a sé rimuove la frase precedente. Un valore corretto con un segnale (\"alle 10, anzi alle 11\", \"Tuesday, sorry, Wednesday\") tiene solo quello nuovo."
       },
       "chineseScript": {
         "title": "Scrittura cinese",

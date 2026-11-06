@@ -1,7 +1,7 @@
 use crate::audio_toolkit::chunking;
 use crate::audio_toolkit::{
-    apply_custom_words, apply_scratch_that, apply_word_replacements, contains_term,
-    detect_output_language, normalize_transcription_output, remove_filler_words,
+    apply_custom_words, apply_scratch_that, apply_spoken_corrections, apply_word_replacements,
+    contains_term, detect_output_language, normalize_transcription_output, remove_filler_words,
     OutputLanguageEvidence,
 };
 use crate::chinese_script::{convert_chinese_script, ChineseVariety};
@@ -1850,7 +1850,7 @@ pub(crate) fn post_process_transcription_text(
         };
 
         let raw = if settings.scratch_that_enabled {
-            apply_scratch_that(&raw)
+            apply_spoken_corrections(&apply_scratch_that(&raw))
         } else {
             raw
         };
