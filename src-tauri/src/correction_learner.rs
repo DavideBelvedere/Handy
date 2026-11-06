@@ -500,6 +500,9 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
                 if let Some(v) = f.value().filter(|v| fold_typography(v).contains(&needle)) {
                     break (f, v);
                 }
+            } else {
+                // A Chrome/Electron app with its AX tree off has no focused element yet.
+                accessibility::enable_manual_accessibility_for_focused_app();
             }
             if Instant::now() >= baseline_deadline {
                 debug!("Auto-learn: inserted text not found in focused field");

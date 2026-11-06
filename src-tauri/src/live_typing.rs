@@ -28,6 +28,9 @@ const HOLDBACK_WORDS: usize = 3;
 /// The target app may not have applied the last keystrokes when we read it.
 const VERIFY_ATTEMPTS: usize = 5;
 const VERIFY_RETRY: Duration = Duration::from_millis(60);
+/// How long a Chrome/Electron app may take to build its AX tree after
+/// AXManualAccessibility; a native field is found on the first read.
+pub(crate) const FIELD_WAIT: Duration = Duration::from_millis(2_500);
 
 enum Cmd {
     /// `generation` 0 = not live.
@@ -184,14 +187,30 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
     if generation == 0 {
         return None;
     }
-    // Chrome/Electron build their AX tree asynchronously after the flag.
-    thread::sleep(Duration::from_millis(200));
-    let Some(target) = accessibility::focused_field()
-        .filter(|f| !f.is_secure() && is_text_target(f.role().as_deref()))
-    else {
-        debug!("Live typing: no non-secure focused text field; using normal paste");
-        return None;
+    // A secure field ends the wait too: it never becomes a target.
+    let (field, waited) = accessibility::wait_for_focused_field(FIELD_WAIT, |f| {
+        f.is_secure() || is_text_target(f.role().as_deref())
+    });
+    let target = match field {
+        None => {
+            debug!("Live typing: no focused element after {waited:?}; using normal paste");
+            return None;
+        }
+        Some(f) if f.is_secure() => {
+            debug!("Live typing: focused field is secure; using normal paste");
+            return None;
+        }
+        Some(f) if !is_text_target(f.role().as_deref()) => {
+            debug!(
+                "Live typing: focused role {:?} (subrole {:?}) is not a text field after {waited:?}; using normal paste",
+                f.role(),
+                f.subrole()
+            );
+            return None;
+        }
+        Some(f) => f,
     };
+    debug!("Live typing: text field found after {waited:?}");
     Some(Session {
         generation,
         target,
@@ -471,7 +490,7 @@ fn next_delta(typed: &str, stable: &str) -> Delta {
 /// Text roles only: keystrokes on other elements (a web page, a Finder list)
 /// fire single-key shortcuts. A selection range is no proof, since a focused
 /// web page can report one with no input focused.
-fn is_text_target(role: Option<&str>) -> bool {
+pub(crate) fn is_text_target(role: Option<&str>) -> bool {
     matches!(
         role,
         Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField")

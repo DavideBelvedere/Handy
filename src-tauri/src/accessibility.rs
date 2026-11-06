@@ -32,6 +32,28 @@ pub fn enable_manual_accessibility_for_focused_app() {
     }
 }
 
+/// Polls for the focused element until `timeout`: a Chrome/Electron app
+/// builds its AX tree asynchronously after AXManualAccessibility, and reports
+/// no focused element (or its web area) until then. Returns the last element
+/// seen with how long it took; `done` decides when to stop early.
+pub fn wait_for_focused_field(
+    timeout: Duration,
+    done: impl Fn(&FocusedField) -> bool,
+) -> (Option<FocusedField>, Duration) {
+    const POLL: Duration = Duration::from_millis(50);
+    let start = std::time::Instant::now();
+    if cfg!(not(target_os = "macos")) {
+        return (None, Duration::ZERO);
+    }
+    loop {
+        let field = focused_field();
+        if field.as_ref().is_some_and(&done) || start.elapsed() >= timeout {
+            return (field, start.elapsed());
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use super::{
@@ -88,9 +110,18 @@ mod imp {
         let _ = unsafe { app.set_attribute_value(&attr, CFBoolean::new(true)) };
     }
 
-    /// Pid of the application owning keyboard focus, readable even before
-    /// `enable_manual_accessibility` builds a Chrome/Electron AX tree.
+    /// Pid of the application owning keyboard focus. A Chrome/Electron app
+    /// whose AX tree is off answers even AXFocusedApplication with NoValue,
+    /// so the frontmost app stands in: without it the tree is never turned on.
     pub(super) fn focused_app_pid() -> Option<i32> {
+        ax_focused_app_pid().or_else(|| {
+            objc2_app_kit::NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .map(|app| app.processIdentifier())
+        })
+    }
+
+    fn ax_focused_app_pid() -> Option<i32> {
         // SAFETY: see `focused_field`.
         let system = unsafe { AXUIElement::new_system_wide() };
         set_timeout(&system);
@@ -385,12 +416,12 @@ pub struct FocusProbe {
 pub async fn probe_focused_field(delay_ms: u32) -> Result<FocusProbe, String> {
     tauri::async_runtime::spawn_blocking(move || {
         std::thread::sleep(Duration::from_millis(delay_ms.into()));
-        if let Some(pid) = imp::focused_app_pid() {
-            enable_manual_accessibility(pid);
-            // Chrome/Electron build their AX tree asynchronously after the flag.
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        let field = focused_field().ok_or("No focused element readable via Accessibility")?;
+        enable_manual_accessibility_for_focused_app();
+        let (field, waited) = wait_for_focused_field(crate::live_typing::FIELD_WAIT, |f| {
+            crate::live_typing::is_text_target(f.role().as_deref())
+        });
+        info!("AX probe: waited {waited:?} for the focused element");
+        let field = field.ok_or("No focused element readable via Accessibility")?;
         let probe = FocusProbe {
             app_pid: field.pid(),
             role: field.role(),
