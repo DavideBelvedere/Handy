@@ -67,6 +67,9 @@ const RecordingOverlay: React.FC = () => {
     committed: "",
     tentative: "",
   });
+  // The text is appearing in the focused field, so the Live panel would only
+  // repeat it: keep to the compact pill.
+  const [liveTyping, setLiveTyping] = useState(false);
   const [phase, setPhase] = useState<StreamPhase>("listening");
   const [workKind, setWorkKind] = useState<StreamWorkKind>("transcribing");
   const [elapsed, setElapsed] = useState(0);
@@ -170,6 +173,10 @@ const RecordingOverlay: React.FC = () => {
         setStreamText(event.payload);
       });
 
+      const unlistenLiveTyping = await listen<boolean>("live-typing", (event) =>
+        setLiveTyping(event.payload),
+      );
+
       const unlistenPhase = await events.streamPhaseEvent.listen((event) => {
         const payload: StreamPhaseEvent = event.payload;
         setPhase(payload.phase);
@@ -210,6 +217,7 @@ const RecordingOverlay: React.FC = () => {
         unlistenReady();
         unlistenLevel();
         unlistenStream();
+        unlistenLiveTyping();
         unlistenPhase();
         unlistenModel();
         clearTimeout(modelLoadTimerRef.current);
@@ -355,7 +363,8 @@ const RecordingOverlay: React.FC = () => {
 
   // ---- Live overlay: a pill that sculpts open into a panel ----
   const liveNotice = state === "live_notice" ? shownNotice : null;
-  if (state === "streaming" || liveNotice) {
+  const typingLive = liveTyping && state === "streaming";
+  if ((state === "streaming" && !typingLive) || liveNotice) {
     const hasText =
       streamText.committed.length > 0 || streamText.tentative.length > 0;
     const working = !liveNotice && phase === "working";
@@ -432,9 +441,14 @@ const RecordingOverlay: React.FC = () => {
   // ---- Minimal overlay: exactly one row at a time — waveform (recording), or a
   // spinner + label (transcribing / processing). Never both. The pill animates its
   // width between them; the cancel button is in both rows so it stays put.
-  const working = state === "transcribing" || state === "processing";
+  const working =
+    state === "transcribing" ||
+    state === "processing" ||
+    (typingLive && phase === "working");
   const workLabel =
-    state === "processing" ? t("overlay.processing") : transcribingLabel;
+    state === "processing" || (typingLive && workKind === "polishing")
+      ? t("overlay.processing")
+      : transcribingLabel;
 
   return (
     <div
