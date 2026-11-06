@@ -876,13 +876,17 @@ pub fn run(cli_args: CliArgs) {
             notices::NoticesChanged,
         ]);
 
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
-    specta_builder
-        .export(
-            Typescript::default().bigint(BigIntExportBehavior::Number),
-            "../src/bindings.ts",
-        )
-        .expect("Failed to export typescript bindings");
+    // Only on non-release builds. Not per file transcription: the dictation
+    // eval runs one per clip, and each rewrite made Vite reload a running dev app.
+    #[cfg(debug_assertions)]
+    if cli_args.transcribe_file.is_none() {
+        specta_builder
+            .export(
+                Typescript::default().bigint(BigIntExportBehavior::Number),
+                "../src/bindings.ts",
+            )
+            .expect("Failed to export typescript bindings");
+    }
 
     let invoke_handler = specta_builder.invoke_handler();
 
