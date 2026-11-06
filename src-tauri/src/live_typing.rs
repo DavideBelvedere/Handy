@@ -3,6 +3,11 @@
 //! replace of the part that differs from the final text. Text is only ever deleted after Accessibility confirms it is still
 //! the text we typed, right before the cursor, in the same field.
 //!
+//! The user may edit the field or move the cursor while dictating. Before
+//! each delta the field is checked; on such a change the current [`Segment`]
+//! is sealed (never touched again) and the next words start a new one at the
+//! cursor. Only the last segment, if unedited, gets the final replace.
+//!
 //! Without an Accessibility target (non-macOS, unreadable field) no session
 //! starts and the caller does the normal paste.
 
@@ -43,14 +48,21 @@ enum Cmd {
         language: OutputLanguageEvidence,
         languages: Vec<String>,
     },
-    Finish(String, mpsc::Sender<Finish>),
+    /// The live segment's final text and its text before Post Process.
+    Finish {
+        text: String,
+        raw: String,
+        reply: mpsc::Sender<Finish>,
+    },
+    SegmentStart(mpsc::Sender<usize>),
     Cancel,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Finish {
-    /// Live typing typed the output.
-    Handled,
+    /// Live typing typed the output; holds what the last step inserted, for
+    /// the correction watcher.
+    Handled(String),
     /// The field could not be verified, so the output went to the clipboard.
     Copied,
     /// Nothing was typed live: do the normal paste.
@@ -115,12 +127,26 @@ impl LiveTyper {
         }
     }
 
-    /// Delivers the final text. Blocks until the typer is done, so it must not
-    /// run on the main thread (the typer types through it).
-    pub fn finish(&self, final_text: String) -> Finish {
+    /// Words of the final transcription that belong to sealed segments (0
+    /// when nothing was sealed): only the rest, [`split_at_word`], is Post
+    /// Processed and passed to [`Self::finish`]. Blocks until queued commits
+    /// are typed; never call it on the main thread.
+    pub fn segment_start(&self) -> usize {
+        let (reply, rx) = mpsc::channel();
+        if self.tx.send(Cmd::SegmentStart(reply)).is_err() {
+            return 0;
+        }
+        rx.recv().unwrap_or(0)
+    }
+
+    /// Delivers the live segment's final text, and `raw`, the same text before
+    /// Post Process, typed instead when the user edited the segment. Blocks
+    /// until the typer is done, so it must not run on the main thread (the
+    /// typer types through it).
+    pub fn finish(&self, text: String, raw: String) -> Finish {
         self.current.store(0, Ordering::Release);
         let (reply, rx) = mpsc::channel();
-        if self.tx.send(Cmd::Finish(final_text, reply)).is_err() {
+        if self.tx.send(Cmd::Finish { text, raw, reply }).is_err() {
             return Finish::Fallback;
         }
         rx.recv().unwrap_or(Finish::Fallback)
@@ -136,7 +162,7 @@ impl LiveTyper {
 struct Session {
     generation: u64,
     target: FocusedField,
-    typed: String,
+    segment: Segment,
     /// Still typing deltas; cleared when the text diverges or focus moves.
     active: bool,
     /// A typing call failed, so the field content is unknown: never touch it again.
@@ -163,12 +189,15 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
                     type_committed(&app, s, text, &language, &languages);
                 }
             }
-            Cmd::Finish(final_text, reply) => {
+            Cmd::Finish { text, raw, reply } => {
                 let outcome = match session.take() {
-                    Some(s) => finish_session(&app, s, &final_text),
+                    Some(s) => finish_session(&app, s, &text, &raw),
                     None => Finish::Fallback,
                 };
                 let _ = reply.send(outcome);
+            }
+            Cmd::SegmentStart(reply) => {
+                let _ = reply.send(session.as_ref().map_or(0, |s| s.segment.start_words));
             }
             Cmd::Cancel => {
                 if let Some(s) = session.take() {
@@ -214,7 +243,7 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
     Some(Session {
         generation,
         target,
-        typed: String::new(),
+        segment: Segment::default(),
         active: true,
         poisoned: false,
         settings,
@@ -229,25 +258,11 @@ fn type_committed(
     languages: &[String],
 ) {
     let cleaned = post_process_transcription_text(raw, &s.settings, &[], language, languages);
-    let delta = match next_delta(&s.typed, stable_prefix(&cleaned, HOLDBACK_WORDS)) {
-        Delta::Nothing => return,
-        Delta::Diverged => {
-            debug!(
-                "Live typing: cleaned text diverged after {} typed chars; stopping",
-                s.typed.chars().count()
-            );
-            s.active = false;
-            return;
-        }
-        Delta::Append(delta) => delta,
-    };
-    if !on_target(&s.target) {
-        debug!("Live typing: focus moved; stopping");
-        s.active = false;
-        return;
-    }
+    let delta = segment_delta(s, &cleaned);
+    s.segment.seen_words = word_count(&cleaned);
+    let Some(delta) = delta else { return };
     match type_on_main(app, 0, &delta) {
-        Ok(()) => s.typed.push_str(&delta),
+        Ok(()) => s.segment.typed.push_str(&delta),
         Err(e) => {
             warn!("Live typing: typing failed ({e}); stopping");
             s.active = false;
@@ -256,50 +271,111 @@ fn type_committed(
     }
 }
 
-fn finish_session(app: &AppHandle, s: Session, final_text: &str) -> Finish {
-    let mut text = final_text.to_string();
+/// What to type for `cleaned` at the cursor, after checking the field: a
+/// user edit or cursor move seals the segment first.
+fn segment_delta(s: &mut Session, cleaned: &str) -> Option<String> {
+    let delta = match s.segment.delta(cleaned) {
+        Delta::Nothing => return None,
+        Delta::Diverged => {
+            debug!(
+                "Live typing: cleaned text diverged after {} typed chars; stopping",
+                s.segment.typed.chars().count()
+            );
+            s.active = false;
+            return None;
+        }
+        Delta::Append(delta) => delta,
+    };
+    match verify_field(&s.target, &s.segment.typed) {
+        FieldCheck::Verified | FieldCheck::Unreadable => Some(delta),
+        FieldCheck::Moved => {
+            debug!("Live typing: focus moved; stopping");
+            s.active = false;
+            None
+        }
+        // Typing would replace the user's selection: wait for the next commit.
+        FieldCheck::Selection => None,
+        FieldCheck::Edited => {
+            let (carry_tail, lead) = cursor_context(s.target.text_near_cursor());
+            let dropped = s.segment.seal(carry_tail, lead);
+            debug!(
+                "Live typing: field edited; new segment at the cursor from word {} ({dropped} pending words dropped)",
+                s.segment.start_words
+            );
+            match s.segment.delta(cleaned) {
+                Delta::Append(delta) => Some(delta),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn finish_session(app: &AppHandle, s: Session, final_text: &str, raw_text: &str) -> Finish {
+    let seg = &s.segment;
+    if seg.typed.is_empty() && seg.start_words == 0 {
+        // Nothing was typed live: the normal paste does the job.
+        return Finish::Fallback;
+    }
+    let mut text = seg.with_lead(final_text);
     if s.settings.append_trailing_space && !text.is_empty() {
         text.push(' ');
     }
-    let (backspaces, insert) = match plan_finish(&s.typed, &text) {
-        FinishPlan::Fallback => return Finish::Fallback,
-        FinishPlan::TypeRest(rest) => (Some(0), rest),
-        FinishPlan::Replace { keep } => {
-            (backspace_count(&s.typed[keep..]), text[keep..].to_string())
+    let check = if s.poisoned {
+        None
+    } else if seg.typed == text {
+        // The field already holds the whole output: nothing to read.
+        Some(FieldCheck::Verified)
+    } else {
+        Some(verify_field(&s.target, &seg.typed))
+    };
+    let mut edited_rest = String::new();
+    if check == Some(FieldCheck::Edited) {
+        // Kept raw: Post Process must not undo the user's edits.
+        let (carry_tail, lead) = cursor_context(s.target.text_near_cursor());
+        if carry_tail {
+            edited_rest = with_lead(lead, skip_words(raw_text, word_count(&seg.typed)));
+            if s.settings.append_trailing_space && !edited_rest.is_empty() {
+                edited_rest.push(' ');
+            }
         }
-    };
-    // An untrusted backspace count is treated like a mismatch: never delete.
-    let field = match backspaces {
-        // Nothing left to type: the field already holds the whole output.
-        Some(0) if insert.is_empty() && !s.poisoned => FieldCheck::Verified,
-        Some(_) if !s.poisoned => verify_field(&s.target, &s.typed),
-        _ => FieldCheck::Mismatch,
-    };
-    let backspaces = backspaces.unwrap_or(0);
-    // Appending deletes nothing, so an unreadable field only needs focus;
-    // deleting needs a verified read.
-    let may_type =
-        field == FieldCheck::Verified || (backspaces == 0 && field == FieldCheck::Unreadable);
-    if may_type && type_on_main(app, backspaces, &insert).is_ok() {
         debug!(
-            "Live typing finished: {} typed, {} backspaces, {} chars inserted",
-            s.typed.chars().count(),
-            backspaces,
-            insert.chars().count()
+            "Live typing: segment edited before finish; {} raw chars typed at the cursor",
+            edited_rest.chars().count()
         );
-        finish_like_paste(app, &s.settings, text);
-    } else if !final_text.is_empty() {
-        warn!(
-            "Live typing: field not verified after {} typed chars; final text copied to clipboard",
-            s.typed.chars().count()
-        );
-        let final_text = final_text.to_string();
-        if let Err(e) = on_main(app, move |app| write_text_to_clipboard(app, &final_text)) {
-            warn!("Live typing: clipboard fallback failed: {e}");
-        }
-        return Finish::Copied;
     }
-    Finish::Handled
+    let step = check.map_or(FinishStep::Copy, |check| {
+        plan_segment_finish(check, &seg.typed, &text, edited_rest)
+    });
+    if let FinishStep::Type { backspaces, insert } = &step {
+        if type_on_main(app, *backspaces, insert).is_ok() {
+            debug!(
+                "Live typing finished: {} typed, {} backspaces, {} chars inserted",
+                seg.typed.chars().count(),
+                backspaces,
+                insert.chars().count()
+            );
+            // An edited segment only got `insert`; otherwise it now holds `text`.
+            let inserted = if check == Some(FieldCheck::Edited) {
+                insert.trim().to_string()
+            } else {
+                text
+            };
+            finish_like_paste(app, &s.settings, inserted.clone());
+            return Finish::Handled(inserted);
+        }
+    }
+    if final_text.is_empty() {
+        return Finish::Handled(String::new());
+    }
+    warn!(
+        "Live typing: field not verified after {} typed chars; final text copied to clipboard",
+        seg.typed.chars().count()
+    );
+    let final_text = final_text.to_string();
+    if let Err(e) = on_main(app, move |app| write_text_to_clipboard(app, &final_text)) {
+        warn!("Live typing: clipboard fallback failed: {e}");
+    }
+    Finish::Copied
 }
 
 /// The parts of `clipboard::paste` that follow the insertion.
@@ -320,14 +396,16 @@ fn finish_like_paste(app: &AppHandle, settings: &AppSettings, text: String) {
     }
 }
 
+/// Removes the live segment only: sealed ones hold the user's edits.
 fn cancel_session(app: &AppHandle, s: Session) {
-    if s.typed.is_empty() {
+    let typed = &s.segment.typed;
+    if typed.is_empty() {
         return;
     }
-    let count = s.typed.chars().count();
+    let count = typed.chars().count();
     if !s.poisoned
-        && backspace_count(&s.typed).is_some()
-        && verify_field(&s.target, &s.typed) == FieldCheck::Verified
+        && backspace_count(typed).is_some()
+        && verify_field(&s.target, typed) == FieldCheck::Verified
         && type_on_main(app, count, "").is_ok()
     {
         debug!("Live typing cancelled: removed {count} typed chars");
@@ -340,13 +418,18 @@ fn on_target(target: &FocusedField) -> bool {
     accessibility::focused_field().is_some_and(|f| f.same_as(target))
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FieldCheck {
     /// The target has focus and holds `typed` right before the cursor, with
     /// nothing selected.
     Verified,
-    /// Focus moved, or the field was read and never matched.
-    Mismatch,
+    /// Focus left the target field.
+    Moved,
+    /// The user selected text in the target: typing would replace it.
+    Selection,
+    /// The target was read and never held `typed` right before the cursor:
+    /// the user edited it or moved the cursor.
+    Edited,
     /// The target has focus but its text could not be read.
     Unreadable,
 }
@@ -357,11 +440,14 @@ fn verify_field(target: &FocusedField, typed: &str) -> FieldCheck {
     for attempt in 0..VERIFY_ATTEMPTS {
         if !on_target(target) {
             debug!("Live typing: verify failed, focus moved");
-            return FieldCheck::Mismatch;
+            return FieldCheck::Moved;
         }
         if let (Some(before), Some(selected)) =
             (target.text_before_cursor(len), target.selected_range())
         {
+            if selected.length > 0 {
+                return FieldCheck::Selection;
+            }
             if can_replace(&before, selected, typed) {
                 return FieldCheck::Verified;
             }
@@ -377,7 +463,7 @@ fn verify_field(target: &FocusedField, typed: &str) -> FieldCheck {
                 "Live typing: verify failed, {}",
                 mismatch_summary(&before, selected, typed)
             );
-            FieldCheck::Mismatch
+            FieldCheck::Edited
         }
         None => {
             debug!("Live typing: verify failed, field unreadable");
@@ -499,7 +585,6 @@ pub(crate) fn is_text_target(role: Option<&str>) -> bool {
 
 #[derive(Debug, PartialEq, Eq)]
 enum FinishPlan {
-    Fallback,
     TypeRest(String),
     /// Delete what was typed after its first `keep` bytes (the graphemes it
     /// shares with the final text), then type the rest of the final text.
@@ -509,9 +594,6 @@ enum FinishPlan {
 }
 
 fn plan_finish(typed: &str, final_text: &str) -> FinishPlan {
-    if typed.is_empty() {
-        return FinishPlan::Fallback;
-    }
     match final_text.strip_prefix(typed) {
         Some(rest) => FinishPlan::TypeRest(rest.to_string()),
         None => FinishPlan::Replace {
@@ -526,10 +608,167 @@ fn plan_finish(typed: &str, final_text: &str) -> FinishPlan {
 }
 
 /// `before` (the text before the cursor) ends with `typed` and nothing is
-/// selected. Compared in UTF-16 units, as AX reports them.
+/// selected. Compared in UTF-16 units, as AX reports them. An empty `typed`
+/// (a segment that typed nothing yet) only needs no selection.
 fn can_replace(before: &str, selected: Utf16Range, typed: &str) -> bool {
     let units = |s: &str| fold_typography(s).encode_utf16().collect::<Vec<u16>>();
-    selected.length == 0 && !typed.is_empty() && units(before).ends_with(&units(typed))
+    selected.length == 0 && units(before).ends_with(&units(typed))
+}
+
+/// The text the session types at the cursor. A user edit or cursor move
+/// seals it: it is never revised again, and the next words start a new one.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Segment {
+    /// Words of the cleaned dictation before this segment: typed into sealed
+    /// segments, or dropped as a sealed segment's pending tail.
+    start_words: usize,
+    /// "" or " ": separates the segment from the user's text before the cursor.
+    lead: &'static str,
+    /// What this segment typed, `lead` included.
+    typed: String,
+    /// Words in the cleaned text at the last commit.
+    seen_words: usize,
+}
+
+impl Segment {
+    /// Delta to type for `cleaned`, whose last [`HOLDBACK_WORDS`] words are a
+    /// tentative tail that is never typed, so revising it deletes nothing.
+    fn delta(&self, cleaned: &str) -> Delta {
+        let stable = stable_prefix(cleaned, HOLDBACK_WORDS);
+        next_delta(
+            &self.typed,
+            &self.with_lead(skip_words(stable, self.start_words)),
+        )
+    }
+
+    fn with_lead(&self, text: &str) -> String {
+        with_lead(self.lead, text)
+    }
+
+    /// Seals this segment and starts the next at the cursor, `lead` apart from
+    /// the text before it. Its pending tail (words seen but not typed) goes to
+    /// the new segment when the cursor is at the end of the text, where the
+    /// user kept writing; otherwise it is dropped. Returns the dropped words.
+    fn seal(&mut self, carry_tail: bool, lead: &'static str) -> usize {
+        let typed_end = self.start_words + word_count(&self.typed);
+        let next = if carry_tail {
+            typed_end
+        } else {
+            self.seen_words.max(typed_end)
+        };
+        *self = Segment {
+            start_words: next,
+            lead,
+            typed: String::new(),
+            seen_words: self.seen_words,
+        };
+        next - typed_end
+    }
+}
+
+fn with_lead(lead: &str, text: &str) -> String {
+    let text = text.trim_start();
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!("{lead}{text}")
+    }
+}
+
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+/// Byte offset of word `n` (0-based, whitespace-separated) in `text`, or its
+/// length when it has fewer words.
+fn word_offset(text: &str, n: usize) -> usize {
+    let mut words = 0;
+    let mut prev_ws = true;
+    for (i, c) in text.char_indices() {
+        if !c.is_whitespace() && prev_ws {
+            if words == n {
+                return i;
+            }
+            words += 1;
+        }
+        prev_ws = c.is_whitespace();
+    }
+    text.len()
+}
+
+/// `text` from its word `n` on.
+fn skip_words(text: &str, n: usize) -> &str {
+    &text[word_offset(text, n)..]
+}
+
+/// Splits the final transcription into the sealed segments' words (first
+/// [`LiveTyper::segment_start`] words) and the live segment's.
+pub fn split_at_word(text: &str, n: usize) -> (&str, &str) {
+    let (sealed, live) = text.split_at(if n == 0 { 0 } else { word_offset(text, n) });
+    (sealed.trim_end(), live)
+}
+
+/// From the text around the cursor and the cursor's UTF-16 offset in it:
+/// whether the cursor is at the end of the text (only whitespace after it),
+/// and the lead a new segment needs ("" after whitespace or at the start).
+/// Unreadable: drop the tail, no lead.
+fn cursor_context(near: Option<(String, usize)>) -> (bool, &'static str) {
+    let Some((text, cursor)) = near else {
+        return (false, "");
+    };
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let cursor = cursor.min(units.len());
+    let before = String::from_utf16_lossy(&units[..cursor]);
+    let after = String::from_utf16_lossy(&units[cursor..]);
+    let lead = match before.chars().next_back() {
+        Some(c) if !c.is_whitespace() => " ",
+        _ => "",
+    };
+    (after.trim().is_empty(), lead)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FinishStep {
+    /// Send `backspaces` Backspaces, then type `insert`.
+    Type { backspaces: usize, insert: String },
+    /// Leave the field alone; the final text goes to the clipboard.
+    Copy,
+}
+
+/// How to end the live segment, which typed `typed`, given the field check.
+/// Only a verified, unedited segment is replaced with `text` (the final,
+/// Post Processed text). An edited one keeps the user's edits and only gets
+/// `edited_rest`, raw text typed at the cursor.
+fn plan_segment_finish(
+    check: FieldCheck,
+    typed: &str,
+    text: &str,
+    edited_rest: String,
+) -> FinishStep {
+    let plan = plan_finish(typed, text);
+    match (check, plan) {
+        (FieldCheck::Verified | FieldCheck::Unreadable, FinishPlan::TypeRest(rest)) => {
+            FinishStep::Type {
+                backspaces: 0,
+                insert: rest,
+            }
+        }
+        // Deleting needs a verified read and an exact Backspace count.
+        (FieldCheck::Verified, FinishPlan::Replace { keep }) => {
+            match backspace_count(&typed[keep..]) {
+                Some(backspaces) => FinishStep::Type {
+                    backspaces,
+                    insert: text[keep..].to_string(),
+                },
+                None => FinishStep::Copy,
+            }
+        }
+        (FieldCheck::Edited, _) => FinishStep::Type {
+            backspaces: 0,
+            insert: edited_rest,
+        },
+        _ => FinishStep::Copy,
+    }
 }
 
 /// Backspaces that delete exactly `typed`, or None when it holds a
@@ -593,8 +832,11 @@ mod tests {
 
     #[test]
     fn plan_finish_table() {
-        assert_eq!(plan_finish("", "anything"), FinishPlan::Fallback);
-        assert_eq!(plan_finish("", ""), FinishPlan::Fallback);
+        assert_eq!(
+            plan_finish("", "anything"),
+            FinishPlan::TypeRest("anything".into())
+        );
+        assert_eq!(plan_finish("", ""), FinishPlan::TypeRest("".into()));
         assert_eq!(
             plan_finish("hello", "hello"),
             FinishPlan::TypeRest("".into())
@@ -633,7 +875,8 @@ mod tests {
         assert!(can_replace("send it", no_selection(), "send it"));
         assert!(!can_replace("send it now", no_selection(), "send it"));
         assert!(!can_replace("it", no_selection(), "send it"));
-        assert!(!can_replace("anything", no_selection(), ""));
+        // A segment that typed nothing yet only needs no selection.
+        assert!(can_replace("anything", no_selection(), ""));
         let selection = Utf16Range {
             location: 0,
             length: 2,
@@ -712,6 +955,188 @@ mod tests {
         assert_eq!(
             fold_typography("don\u{2019}t").encode_utf16().count(),
             "don't".encode_utf16().count()
+        );
+    }
+
+    /// A segment fed the cleaned commits in `commits`, typing every delta.
+    fn typed_through(seg: &mut Segment, commits: &[&str]) {
+        for cleaned in commits {
+            if let Delta::Append(delta) = seg.delta(cleaned) {
+                seg.typed.push_str(&delta);
+            }
+            seg.seen_words = word_count(cleaned);
+        }
+    }
+
+    #[test]
+    fn unedited_segment_keeps_appending() {
+        let mut seg = Segment::default();
+        typed_through(
+            &mut seg,
+            &[
+                "send it",
+                "send it to Bob on",
+                "send it to Bob on Friday at noon",
+            ],
+        );
+        assert_eq!(seg.typed, "send it to Bob on");
+        assert_eq!(seg.start_words, 0);
+        assert_eq!(
+            seg.delta("send it to Bob on Friday at noon"),
+            Delta::Nothing
+        );
+    }
+
+    #[test]
+    fn asr_revising_the_tentative_tail_deletes_nothing() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["send it to Bob on Thursday"]);
+        assert_eq!(seg.typed, "send it to");
+        // The held-back "Bob on Thursday" is revised: never typed, so no
+        // deletion and no divergence.
+        assert_eq!(
+            seg.delta("send it to Rob on Friday at noon"),
+            Delta::Append(" Rob on".into())
+        );
+    }
+
+    #[test]
+    fn seal_after_edit_mid_text_drops_the_pending_tail() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["Dear Bob send it Thursday at noon"]);
+        assert_eq!(seg.typed, "Dear Bob send it");
+        // The user fixed "Bob" and left the cursor after it, mid-text: the
+        // pending "Thursday at noon" would land in the wrong place.
+        let (carry, lead) = cursor_context(Some(("Dear Rob send it".into(), 8)));
+        assert_eq!((carry, lead), (false, " "));
+        assert_eq!(seg.seal(carry, lead), 3);
+        assert_eq!(seg.start_words, 7);
+        assert!(seg.typed.is_empty(), "sealed text is never deleted");
+        // Only words spoken after the edit reach the new segment.
+        assert_eq!(
+            seg.delta("Dear Bob send it Thursday at noon and also call Anna back please"),
+            Delta::Append(" and also call".into())
+        );
+    }
+
+    #[test]
+    fn seal_with_cursor_at_end_carries_the_pending_tail() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["send it Thursday at noon please"]);
+        assert_eq!(seg.typed, "send it Thursday");
+        // The user retyped the last word at the end of the field and kept going.
+        let (carry, lead) = cursor_context(Some(("send it Friday\n".into(), 14)));
+        assert_eq!((carry, lead), (true, " "));
+        assert_eq!(seg.seal(carry, lead), 0);
+        assert_eq!(
+            seg.delta("send it Thursday at noon please and more words here"),
+            Delta::Append(" at noon please and".into())
+        );
+    }
+
+    #[test]
+    fn edit_inside_sealed_text_never_reaches_the_new_segment() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["one two three four five"]);
+        seg.seal(false, "");
+        let sealed_at = seg.start_words;
+        // Whatever the user did to the sealed words, the new segment only
+        // ever sees words after them, and typed nothing deletable.
+        typed_through(&mut seg, &["one two three four five six seven eight nine"]);
+        assert_eq!(seg.start_words, sealed_at);
+        assert_eq!(seg.typed, "six");
+        assert_eq!(
+            plan_segment_finish(FieldCheck::Edited, &seg.typed, "Six seven.", String::new()),
+            FinishStep::Type {
+                backspaces: 0,
+                insert: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_context_reads_lead_and_end() {
+        assert_eq!(cursor_context(None), (false, ""));
+        assert_eq!(cursor_context(Some(("".into(), 0))), (true, ""));
+        assert_eq!(cursor_context(Some(("hi ".into(), 3))), (true, ""));
+        assert_eq!(cursor_context(Some(("hi there".into(), 2))), (false, " "));
+        // UTF-16 offsets: the emoji is two units.
+        assert_eq!(cursor_context(Some(("😀x".into(), 2))), (false, " "));
+        assert_eq!(cursor_context(Some(("x".into(), 99))), (true, " "));
+    }
+
+    #[test]
+    fn split_at_word_cuts_the_final_text_at_the_segment() {
+        assert_eq!(split_at_word("send it now", 0), ("", "send it now"));
+        assert_eq!(split_at_word("send it  now", 2), ("send it", "now"));
+        assert_eq!(split_at_word("send it", 5), ("send it", ""));
+        assert_eq!(skip_words("a b c", 1), "b c");
+        assert_eq!(word_offset("  a b", 0), 2);
+    }
+
+    #[test]
+    fn post_process_replaces_only_an_unedited_segment() {
+        // Unedited: the LLM text replaces what was typed live.
+        assert_eq!(
+            plan_segment_finish(
+                FieldCheck::Verified,
+                "send it to bob",
+                "Send it to Bob.",
+                String::new()
+            ),
+            FinishStep::Type {
+                backspaces: 14,
+                insert: "Send it to Bob.".into()
+            }
+        );
+        // Edited: the user's text stays; only the raw rest goes in at the cursor.
+        assert_eq!(
+            plan_segment_finish(
+                FieldCheck::Edited,
+                "send it to bob",
+                "Send it to Bob.",
+                " on Friday".into()
+            ),
+            FinishStep::Type {
+                backspaces: 0,
+                insert: " on Friday".into()
+            }
+        );
+        // Unreadable: append only, never delete.
+        assert_eq!(
+            plan_segment_finish(
+                FieldCheck::Unreadable,
+                "send it",
+                "send it now",
+                String::new()
+            ),
+            FinishStep::Type {
+                backspaces: 0,
+                insert: " now".into()
+            }
+        );
+        assert_eq!(
+            plan_segment_finish(FieldCheck::Unreadable, "send it", "Send it.", String::new()),
+            FinishStep::Copy
+        );
+        for check in [FieldCheck::Moved, FieldCheck::Selection] {
+            assert_eq!(
+                plan_segment_finish(check, "send it", "Send it.", String::new()),
+                FinishStep::Copy
+            );
+        }
+        // A new segment that typed nothing yet gets its whole final text.
+        assert_eq!(
+            plan_segment_finish(FieldCheck::Verified, "", " Call Anna.", String::new()),
+            FinishStep::Type {
+                backspaces: 0,
+                insert: " Call Anna.".into()
+            }
+        );
+        // Never split a multi-codepoint grapheme with Backspace.
+        assert_eq!(
+            plan_segment_finish(FieldCheck::Verified, "ok 👍🏽", "Ok.", String::new()),
+            FinishStep::Copy
         );
     }
 }

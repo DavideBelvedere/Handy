@@ -630,15 +630,15 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
             match tm.transcribe_recording(samples.clone()).map(|t| t.text) {
                 Ok(out) => {
                     if let Some(typer) = &typer {
-                        let finish = typer.finish(out.clone());
+                        let (_, live) = live_typing::split_at_word(&out, typer.segment_start());
+                        let finish = typer.finish(live.to_string(), live.to_string());
                         eprintln!("live typing: {finish:?}");
                         let watch_secs = args.live_type.unwrap_or(0);
-                        if finish == live_typing::Finish::Handled
-                            && watch_secs > 0
-                            && get_settings(app).auto_learn_enabled
-                        {
-                            correction_learner::spawn_correction_watcher(app, out.clone());
-                            std::thread::sleep(std::time::Duration::from_secs(watch_secs));
+                        if let live_typing::Finish::Handled(inserted) = finish {
+                            if watch_secs > 0 && get_settings(app).auto_learn_enabled {
+                                correction_learner::spawn_correction_watcher(app, inserted);
+                                std::thread::sleep(std::time::Duration::from_secs(watch_secs));
+                            }
                         }
                     }
                     Ok(out)

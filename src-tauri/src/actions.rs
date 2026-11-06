@@ -3,7 +3,7 @@ use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::VadPolicy;
 use crate::correction_learner;
-use crate::live_typing::{Finish, LiveTyper};
+use crate::live_typing::{self, Finish, LiveTyper};
 use crate::managers::audio::{recording_notice_code, AudioRecordingManager};
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
@@ -815,6 +815,14 @@ impl ShortcutAction for TranscribeAction {
                                 utils::redact_text(&transcription)
                             );
 
+                            // Text the user edited while dictating sits in sealed
+                            // live-typing segments: only the live one is processed.
+                            let segment_start = ah.state::<LiveTyper>().segment_start();
+                            let (sealed_text, live_text) =
+                                live_typing::split_at_word(&transcription, segment_start);
+                            let (sealed_text, live_text) =
+                                (sealed_text.to_string(), live_text.to_string());
+
                             if post_process {
                                 if use_streaming_overlay {
                                     tm.emit_stream_working(StreamWorkKind::Polishing);
@@ -823,7 +831,7 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
                             let Some(processed) = complete_unless_cancelled(
-                                process_transcription_output(&ah, &transcription, post_process),
+                                process_transcription_output(&ah, &live_text, post_process),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
                             .await
@@ -847,7 +855,13 @@ impl ShortcutAction for TranscribeAction {
                                     file_name,
                                     transcription,
                                     post_process,
-                                    processed.post_processed_text.clone(),
+                                    processed.post_processed_text.clone().map(|text| {
+                                        if sealed_text.is_empty() {
+                                            text
+                                        } else {
+                                            format!("{sealed_text} {text}")
+                                        }
+                                    }),
                                     processed.post_process_prompt.clone(),
                                     language,
                                 ) {
@@ -870,7 +884,9 @@ impl ShortcutAction for TranscribeAction {
                             };
 
                             // Off the main thread: the typer types through it.
-                            let live = ah.state::<LiveTyper>().finish(final_text.clone());
+                            let live = ah
+                                .state::<LiveTyper>()
+                                .finish(final_text.clone(), live_text);
                             if live == Finish::Copied {
                                 notices::raise(
                                     &ah,
@@ -888,15 +904,13 @@ impl ShortcutAction for TranscribeAction {
                                 );
                                 return;
                             }
-                            if live == Finish::Handled {
+                            if let Finish::Handled(inserted) = live {
                                 let outcome = if final_text.is_empty() {
                                     empty_outcome(input_silent)
                                 } else {
                                     notices::clear(&ah, NoticeSource::Dictation);
                                     if get_settings(&ah).auto_learn_enabled {
-                                        correction_learner::spawn_correction_watcher(
-                                            &ah, final_text,
-                                        );
+                                        correction_learner::spawn_correction_watcher(&ah, inserted);
                                     }
                                     TranscriptionOutcome::Typed
                                 };
