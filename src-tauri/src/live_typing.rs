@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Trailing words never typed live: custom-word n-grams reach 3 words, so a
@@ -46,9 +46,10 @@ enum Cmd {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Finish {
-    /// Live typing delivered the output (typed it, or copied it to the
-    /// clipboard when the field could not be verified).
+    /// Live typing typed the output.
     Handled,
+    /// The field could not be verified, so the output went to the clipboard.
+    Copied,
     /// Nothing was typed live: do the normal paste.
     Fallback,
 }
@@ -277,7 +278,7 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str) -> Finish {
         if let Err(e) = on_main(app, move |app| write_text_to_clipboard(app, &final_text)) {
             warn!("Live typing: clipboard fallback failed: {e}");
         }
-        let _ = app.emit("live-typing-fallback", ());
+        return Finish::Copied;
     }
     Finish::Handled
 }

@@ -868,10 +868,28 @@ impl ShortcutAction for TranscribeAction {
 
                             // Off the main thread: the typer types through it.
                             let live = ah.state::<LiveTyper>().finish(final_text.clone());
+                            if live == Finish::Copied {
+                                notices::raise(
+                                    &ah,
+                                    Notice::new(
+                                        NoticeCode::LiveTypingFallback,
+                                        NoticeSource::Dictation,
+                                    ),
+                                );
+                                set_tray_state(&ah, TrayIconState::Idle);
+                                emit_transcription_complete(
+                                    &ah,
+                                    TranscriptionOutcome::Failed,
+                                    sample_count,
+                                    stop_time,
+                                );
+                                return;
+                            }
                             if live == Finish::Handled {
                                 let outcome = if final_text.is_empty() {
                                     empty_outcome(input_silent)
                                 } else {
+                                    notices::clear(&ah, NoticeSource::Dictation);
                                     if get_settings(&ah).auto_learn_enabled {
                                         correction_learner::spawn_correction_watcher(
                                             &ah, final_text,

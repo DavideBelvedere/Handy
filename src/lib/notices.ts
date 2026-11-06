@@ -46,6 +46,10 @@ const NOTICE_DISPLAY: Record<NoticeCode, NoticeDisplay> = {
     title: "errors.filePostProcessFailedTitle",
     explanation: (t) => t("errors.filePostProcessFailed"),
   },
+  LiveTypingFallback: {
+    title: "errors.liveTypingFallbackTitle",
+    explanation: (t) => t("errors.liveTypingFallback"),
+  },
 };
 
 export const noticeDisplay = (code: NoticeCode) => NOTICE_DISPLAY[code];

@@ -31,6 +31,7 @@ import { FileDropOverlay } from "./components/FileDropOverlay";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { WhatsNewGate } from "./components/whats-new";
 import { useSettings } from "./hooks/useSettings";
+import { useAutoLearnNotices } from "./hooks/useAutoLearnNotices";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { deleteRetiredModel } from "@/lib/models/retired";
@@ -74,6 +75,7 @@ const renderSettingsContent = (
 
 function App() {
   const { t, i18n } = useTranslation();
+  useAutoLearnNotices();
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
   );

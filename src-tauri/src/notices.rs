@@ -48,6 +48,8 @@ pub enum NoticeCode {
     PostProcessFailed,
     FileTranscriptionFailed,
     FilePostProcessFailed,
+    /// Live typing couldn't verify the field, so the text went to the clipboard.
+    LiveTypingFallback,
 }
 
 impl NoticeCode {
@@ -60,7 +62,9 @@ impl NoticeCode {
             | Self::RecordingFailed
             | Self::ModelLoadFailed
             | Self::FileTranscriptionFailed => NoticeLevel::Error,
-            Self::PostProcessFailed | Self::FilePostProcessFailed => NoticeLevel::Warning,
+            Self::PostProcessFailed | Self::FilePostProcessFailed | Self::LiveTypingFallback => {
+                NoticeLevel::Warning
+            }
         }
     }
 
@@ -76,6 +80,7 @@ impl NoticeCode {
             Self::PostProcessFailed => &strings.post_process_failed_title,
             Self::FileTranscriptionFailed => &strings.file_transcription_failed_title,
             Self::FilePostProcessFailed => &strings.file_post_process_failed_title,
+            Self::LiveTypingFallback => &strings.live_typing_fallback_title,
         }
     }
 }

@@ -988,7 +988,7 @@
     "filePostProcessFailed": "La post-elaborazione non è terminata, quindi la trascrizione è stata salvata così com'è.",
     "fileTranscriptionFailedTitle": "Trascrizione del file non riuscita",
     "transcriptionFailedTitle": "Trascrizione non riuscita",
-    "liveTypingFallbackTitle": "Impossibile aggiornare il testo digitato",
+    "liveTypingFallbackTitle": "Copiato invece che digitato",
     "liveTypingFallback": "Il testo finale è stato copiato negli appunti."
   },
   "notices": {

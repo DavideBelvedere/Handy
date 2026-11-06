@@ -988,7 +988,7 @@
     "filePostProcessFailed": "Post Process didn't finish, so the transcript was saved as is.",
     "fileTranscriptionFailedTitle": "File Transcription Failed",
     "transcriptionFailedTitle": "Transcription Failed",
-    "liveTypingFallbackTitle": "Couldn't update the typed text",
+    "liveTypingFallbackTitle": "Copied Instead of Typed",
     "liveTypingFallback": "The final text was copied to the clipboard."
   },
   "notices": {
