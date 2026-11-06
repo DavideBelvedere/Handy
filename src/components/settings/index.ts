@@ -26,6 +26,7 @@ export { PostProcessingSettingsPrompts } from "./PostProcessingSettingsPrompts";
 export { FillerWordRemoval } from "./FillerWordRemoval";
 export { ScratchThat } from "./ScratchThat";
 export { AutoLearn } from "./AutoLearn";
+export { WindowContextVocabulary } from "./WindowContextVocabulary";
 export { ChineseScriptSetting } from "./ChineseScript";
 export { PreferredLanguages } from "./PreferredLanguages";
 export { AppDataDirectory } from "./AppDataDirectory";

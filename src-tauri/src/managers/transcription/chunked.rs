@@ -25,13 +25,20 @@ pub(super) struct PendingSetup {
     pub plan: Plan,
     pub info: LoadedInfo,
     pub settings: AppSettings,
+    pub context_terms: Vec<String>,
 }
 
 impl ChunkSetup {
     /// The setup, resolving a pending one with `audio`.
     fn resolve(&mut self, tm: &TranscriptionManager, audio: &[f32]) -> &RunSetup {
         if let Self::Pending(pending) = self {
-            let setup = tm.setup_for(&pending.info, &pending.settings, &pending.plan, audio);
+            let setup = tm.setup_for(
+                &pending.info,
+                &pending.settings,
+                &pending.plan,
+                audio,
+                &pending.context_terms,
+            );
             *self = Self::Ready(Box::new(setup));
         }
         match self {

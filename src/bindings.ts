@@ -353,6 +353,18 @@ async updateWordReplacements(replacements: WordReplacement[]) : Promise<Result<n
 }
 },
 /**
+ * Undoes a pair auto-learn just learned, from the toast that reported it.
+ * Returns false when the pair is gone, manual, or edited since.
+ */
+async undoLearnedWord(from: string, to: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("undo_learned_word", { from, to }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Temporarily unregister all bindings while the user is recording a
  * shortcut in the UI. This avoids firing actions while keys are recorded.
  */
@@ -557,6 +569,14 @@ async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, st
  */
 async getAvailableAccelerators() : Promise<AvailableAccelerators> {
     return await TAURI_INVOKE("get_available_accelerators");
+},
+async changeWindowContextVocabularySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_window_context_vocabulary_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Start key recording mode
@@ -1201,6 +1221,11 @@ auto_learn_enabled?: boolean;
  * auto-learn saves a correction.
  */
 auto_learn_llm_filter?: boolean; 
+/**
+ * Send the names and terms around the cursor in the focused app to the
+ * model as extra vocabulary when a dictation starts.
+ */
+window_context_vocabulary?: boolean; 
 /**
  * Type streamed dictation into the focused field while speaking.
  */

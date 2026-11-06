@@ -611,6 +611,10 @@
         "title": "Filter learned words with AI",
         "description": "Before saving a learned pair, asks your post-processing provider whether the corrected word is real vocabulary (a name, brand, acronym or technical term). Only the corrected words are sent, never the rest of the text. If the provider fails or doesn't answer, nothing is learned."
       },
+      "windowContextVocabulary": {
+        "title": "Use names on screen",
+        "description": "When a dictation starts, reads the text around the cursor in the field you're typing into and gives the names and technical terms it finds to the model, so they're spelled right the first time. The text stays on this computer, is used for that dictation only and is never saved. Only helps models that accept a vocabulary, such as Whisper. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "音声区間検出 (VAD)",
         "description": "録音から無音部分を除去します。ストリーミング対応モデルはより長い音声検出区間を使用します。VAD を無効にすると音声をそのまま録音します。"
@@ -1029,6 +1033,9 @@
   },
   "autoLearn": {
     "learned": "Learned: {{from}} → {{to}}",
-    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?",
+    "undo": "Undo",
+    "undone": "Removed: {{from}} → {{to}}",
+    "undoFailed": "Couldn't undo {{from}} → {{to}}: it was edited or already removed"
   }
 }

@@ -34,7 +34,10 @@ pub fn enable_manual_accessibility_for_focused_app() {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::{cursor_window, decode_utf16_window, is_large_doc, range_before, Utf16Range};
+    use super::{
+        cursor_window, decode_utf16_window, is_large_doc, range_before, Utf16Range,
+        WINDOW_RADIUS_UTF16,
+    };
     use objc2_application_services::{AXError, AXUIElement, AXValue, AXValueType};
     use objc2_core_foundation::{
         CFBoolean, CFIndex, CFNumber, CFRange, CFRetained, CFString, CFType,
@@ -154,6 +157,20 @@ mod imp {
         pub fn text_before_cursor(&self, max_utf16: usize) -> Option<String> {
             let cursor = self.selected_range()?.location;
             self.string_for_range(range_before(cursor, max_utf16))
+        }
+
+        /// ~±2_000 UTF-16 units around the cursor and the cursor's offset in
+        /// them; only the part before it when the length is unknown.
+        pub fn text_near_cursor(&self) -> Option<(String, usize)> {
+            let cursor = self.selected_range()?.location;
+            let Some(total) = self.number_of_characters() else {
+                let before = self.text_before_cursor(WINDOW_RADIUS_UTF16)?;
+                let len = before.encode_utf16().count();
+                return Some((before, len));
+            };
+            let range = cursor_window(cursor, total);
+            let text = self.string_for_range(range)?;
+            Some((text, cursor.min(total) - range.location))
         }
 
         pub fn is_secure(&self) -> bool {
@@ -288,6 +305,9 @@ mod imp {
             None
         }
         pub fn text_before_cursor(&self, _max_utf16: usize) -> Option<String> {
+            None
+        }
+        pub fn text_near_cursor(&self) -> Option<(String, usize)> {
             None
         }
         pub fn is_secure(&self) -> bool {

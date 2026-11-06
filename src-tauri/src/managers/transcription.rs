@@ -22,6 +22,7 @@ use crate::settings::{
     get_settings, write_settings, AppSettings, ChineseScript, ModelUnloadTimeout,
     TranscribeAcceleratorSetting, WordReplacement,
 };
+use crate::window_context::WindowContext;
 use anyhow::Result;
 use chunked::{ChunkSetup, ChunkedDecode};
 use live::LiveSession;
@@ -281,6 +282,8 @@ pub struct TranscriptionManager {
     /// Handy's spoken-language detector, loaded in this process on first
     /// use and unloaded with the model.
     language_detector: Arc<LanguageDetector>,
+    /// The current dictation's on-screen terms, while it lasts.
+    window_context: Arc<Mutex<Option<Arc<WindowContext>>>>,
 }
 
 impl TranscriptionManager {
@@ -302,6 +305,7 @@ impl TranscriptionManager {
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             job_active: Arc::new(AtomicBool::new(false)),
             language_detector: Arc::new(LanguageDetector::default()),
+            window_context: Arc::new(Mutex::new(None)),
         };
 
         // Start the idle watcher
@@ -830,8 +834,12 @@ impl TranscriptionManager {
             let generation = typer.generation();
             (typer, generation)
         });
+        // Same reason: a late worker must not read the next dictation's context.
+        let window_context = self.window_context.lock().unwrap().clone();
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, cancelled, worker_id, live_typer));
+        thread::spawn(move || {
+            manager.run_stream_worker(rx, cancelled, worker_id, live_typer, window_context)
+        });
     }
 
     fn run_stream_worker(
@@ -840,6 +848,7 @@ impl TranscriptionManager {
         cancelled: Arc<AtomicBool>,
         worker_id: u64,
         live_typer: Option<(LiveTyper, u64)>,
+        window_context: Option<Arc<WindowContext>>,
     ) {
         let _worker = StreamWorkerGuard {
             worker_id,
@@ -885,7 +894,14 @@ impl TranscriptionManager {
             ModelTraits::of(&info),
             get_settings(&self.app_handle).long_form_chunking,
         );
-        let Some(mut session) = LiveSession::begin(self, mode, &info, &model_id, live_typer) else {
+        let Some(mut session) = LiveSession::begin(
+            self,
+            mode,
+            &info,
+            &model_id,
+            live_typer,
+            window_context.as_deref(),
+        ) else {
             // Nothing to decode live: the recording is transcribed in batch.
             self.router.clear();
             drain_until_finalize(rx);
@@ -952,6 +968,34 @@ impl TranscriptionManager {
             let _ = route.tx.send(StreamCmd::Cancel);
         }
         self.stream_active.store(false, Ordering::Release);
+        self.window_context.lock().unwrap().take();
+    }
+
+    /// Starts reading the on-screen terms of the dictation starting now, when
+    /// enabled and the model (if already loaded) takes vocabulary, replacing
+    /// the previous dictation's. Returns at once.
+    // shortcut: one slot, so a dictation started while the previous one still decodes in batch hands it the newer context; key the slot by recording session if that matters.
+    pub fn capture_window_context(&self, settings: &AppSettings) {
+        let takes_vocabulary = self
+            .engine
+            .loaded()
+            .is_none_or(|info| info.supports_vocabulary);
+        let capture = (settings.window_context_vocabulary && takes_vocabulary).then(|| {
+            let known = settings
+                .custom_words
+                .iter()
+                .cloned()
+                .chain(
+                    settings
+                        .word_replacements
+                        .iter()
+                        .filter(|r| r.learned)
+                        .map(|r| r.to.clone()),
+                )
+                .collect();
+            WindowContext::capture(known)
+        });
+        *self.window_context.lock().unwrap() = capture;
     }
 
     /// Stop the transcription in progress (a batch run or stream finalize),
@@ -974,24 +1018,32 @@ impl TranscriptionManager {
     /// Transcribe a whole clip in batch: a re-transcribed history entry, or
     /// a file from the CLI.
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
-        Ok(self.complete(Instant::now(), audio, None)?.text)
+        Ok(self.complete(Instant::now(), audio, None, &[])?.text)
     }
 
     /// Transcribe a finished recording: what its live decode produced, or a
     /// batch run of the whole recording when there is no live result.
     pub fn transcribe_recording(&self, samples: Vec<f32>) -> Result<Transcription> {
+        // Taken first, so the context ends with this dictation however it ends.
+        let window_context = self.window_context.lock().unwrap().take();
         let started = Instant::now();
         let live = self.finalize_live(samples.len())?;
-        self.complete(started, samples, live)
+        let context_terms = match (&live, window_context) {
+            (None, Some(context)) => context.terms(),
+            _ => Vec::new(),
+        };
+        self.complete(started, samples, live, &context_terms)
     }
 
     /// The final text of one transcription, from its live result or else a
-    /// batch run of `audio`. Every transcription finishes here.
+    /// batch run of `audio` with `context_terms` as extra vocabulary. Every
+    /// transcription finishes here.
     fn complete(
         &self,
         started: Instant,
         audio: Vec<f32>,
         live: Option<RunOutcome>,
+        context_terms: &[String],
     ) -> Result<Transcription> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
@@ -1013,7 +1065,7 @@ impl TranscriptionManager {
 
         let outcome = match live {
             Some(outcome) => outcome,
-            None => self.decode_batch(audio)?,
+            None => self.decode_batch(audio, context_terms)?,
         };
         let settings = get_settings(&self.app_handle);
         let language = outcome
@@ -1072,19 +1124,19 @@ impl TranscriptionManager {
 
     /// Decode a whole clip with the loaded model, loading it first if a load
     /// is under way.
-    fn decode_batch(&self, audio: Vec<f32>) -> Result<RunOutcome> {
+    fn decode_batch(&self, audio: Vec<f32>, context_terms: &[String]) -> Result<RunOutcome> {
         // A cancel from here on (during the model-load wait or chunk planning
         // included) stops every run of this transcription.
         let mark = self.engine.cancel_mark();
         self.touch_activity();
-        let batch = self.batch_context(&audio)?;
+        let batch = self.batch_context(&audio, context_terms)?;
         self.transcribe_cpp(mark, batch, audio)
     }
 
     /// Waits out any model load, then reads what a batch transcription of
     /// `audio` runs with: the loaded model, the settings, and the language
     /// resolved for it.
-    fn batch_context(&self, audio: &[f32]) -> Result<BatchContext> {
+    fn batch_context(&self, audio: &[f32], context_terms: &[String]) -> Result<BatchContext> {
         {
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
@@ -1104,7 +1156,7 @@ impl TranscriptionManager {
             .get_current_model()
             .unwrap_or_else(|| settings.selected_model.clone());
         let plan = self.language_plan(&settings, &active_model, &info);
-        let setup = self.setup_for(&info, &settings, &plan, audio);
+        let setup = self.setup_for(&info, &settings, &plan, audio, context_terms);
         Ok(BatchContext {
             info,
             settings,
@@ -1133,6 +1185,7 @@ impl TranscriptionManager {
         settings: &AppSettings,
         plan: &Plan,
         audio: &[f32],
+        context_terms: &[String],
     ) -> RunSetup {
         // No VAD pass when the detector isn't there to use the speech.
         let speech = if !plan.detects() {
@@ -1156,7 +1209,7 @@ impl TranscriptionManager {
             language.intent(),
             language.source
         );
-        run_setup(info, settings, language)
+        run_setup(info, settings, language, context_terms)
     }
 
     /// The first window of speech in `audio`: silence is always cut out by
@@ -1328,7 +1381,12 @@ impl RunSetup {
 /// The loaded model's live capabilities (cheap GGUF-metadata reads) are the
 /// source of truth, not the ModelManager copy; translate is gated on what the
 /// model advertises.
-fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecision) -> RunSetup {
+fn run_setup(
+    info: &LoadedInfo,
+    settings: &AppSettings,
+    language: LanguageDecision,
+    context_terms: &[String],
+) -> RunSetup {
     let model_supports_translate = info.capabilities.supports_translate;
     let languages = info.capabilities.languages.clone();
     debug!(
@@ -1380,6 +1438,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
             info.supports_vocabulary,
             &settings.custom_words,
             &settings.word_replacements,
+            context_terms,
             crate::utils::unix_now(),
         ),
         ..Default::default()
@@ -1622,7 +1681,9 @@ const VOCABULARY_CAP: usize = 50;
 /// Terms for transcribe-cpp's `vocabulary` slot, highest priority first since
 /// an over-budget list loses its tail: custom words as entered, then the
 /// targets of learned replacements, most recently used (< 24 h, < 14 days,
-/// older) and then most used first. Capped at [`VOCABULARY_CAP`].
+/// older) and then most used first. Capped at [`VOCABULARY_CAP`]. Terms read
+/// from the screen ([`crate::window_context`]) come after, outside the cap, so
+/// they never push out a custom or learned word and are the first dropped.
 ///
 /// Every learned target qualifies, not only [`AppSettings::learned_names`]:
 /// vocabulary only biases the decode, so one correction is enough evidence,
@@ -1634,6 +1695,7 @@ fn vocabulary_for_model(
     supports_vocabulary: bool,
     custom_words: &[String],
     word_replacements: &[WordReplacement],
+    context_terms: &[String],
     now: u64,
 ) -> Vec<String> {
     if !supports_vocabulary {
@@ -1664,6 +1726,12 @@ fn vocabulary_for_model(
         (bucket, std::cmp::Reverse(times_used))
     });
 
+    // Learned and context terms come from field text: a control-token literal
+    // or a NUL would fail the whole run, not just this term.
+    let usable = |terms: &[String], term: &str| {
+        let unsafe_term = term.contains(['<', '>', '[', ']']) || term.contains(char::is_control);
+        !term.is_empty() && !unsafe_term && !terms.iter().any(|t| t.eq_ignore_ascii_case(term))
+    };
     let mut terms: Vec<String> = Vec::new();
     for term in custom_words
         .iter()
@@ -1671,14 +1739,16 @@ fn vocabulary_for_model(
         .chain(learned.iter().map(|l| l.0))
         .map(|t| t.trim())
     {
-        // Learned terms come from field text: a control-token literal or a NUL
-        // would fail the whole run, not just this term.
-        let unsafe_term = term.contains(['<', '>', '[', ']']) || term.contains(char::is_control);
-        if !term.is_empty() && !unsafe_term && !terms.iter().any(|t| t.eq_ignore_ascii_case(term)) {
+        if usable(&terms, term) {
             terms.push(term.to_string());
         }
         if terms.len() == VOCABULARY_CAP {
             break;
+        }
+    }
+    for term in context_terms {
+        if usable(&terms, term) {
+            terms.push(term.clone());
         }
     }
     terms
@@ -2597,7 +2667,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            vocabulary_for_model(true, &["Handy".to_string()], &replacements, now),
+            vocabulary_for_model(true, &["Handy".to_string()], &replacements, &[], now),
             [
                 "Handy",
                 "Vandermeulen",
@@ -2641,7 +2711,7 @@ mod tests {
             .map(|i| format!("word{i}"))
             .collect();
         let replacements = vec![learned("fresh", "Ollama", 100 * DAY, 3)];
-        let terms = vocabulary_for_model(true, &custom_words, &replacements, 100 * DAY);
+        let terms = vocabulary_for_model(true, &custom_words, &replacements, &[], 100 * DAY);
         assert_eq!(terms, custom_words[..VOCABULARY_CAP]);
     }
 
@@ -2649,10 +2719,31 @@ mod tests {
     fn learned_words_reach_vocabulary_only_when_the_model_supports_it() {
         let replacements = vec![learned("Holama", "Ollama", 100 * DAY, 3)];
         assert_eq!(
-            vocabulary_for_model(true, &[], &replacements, 100 * DAY),
+            vocabulary_for_model(true, &[], &replacements, &[], 100 * DAY),
             ["Ollama"]
         );
-        assert!(vocabulary_for_model(false, &[], &replacements, 100 * DAY).is_empty());
+        assert!(vocabulary_for_model(false, &[], &replacements, &[], 100 * DAY).is_empty());
+    }
+
+    #[test]
+    fn context_terms_come_after_custom_and_learned_words_outside_the_cap() {
+        let custom_words: Vec<String> = (0..VOCABULARY_CAP).map(|i| format!("word{i}")).collect();
+        let replacements = vec![learned("Holama", "Ollama", 100 * DAY, 3)];
+        let context = ["Okonkwo".to_string(), "WORD0".to_string()];
+        let terms = vocabulary_for_model(true, &custom_words, &replacements, &context, 100 * DAY);
+        // The cap still holds custom words first; the learned word misses it,
+        // and the context term already sent as a custom word isn't repeated.
+        assert_eq!(terms[..VOCABULARY_CAP], custom_words[..]);
+        assert_eq!(terms[VOCABULARY_CAP..], ["Okonkwo"]);
+
+        assert_eq!(
+            vocabulary_for_model(true, &["Handy".into()], &replacements, &context, 100 * DAY),
+            ["Handy", "Ollama", "Okonkwo", "WORD0"]
+        );
+        assert!(
+            vocabulary_for_model(false, &["Handy".into()], &replacements, &context, 100 * DAY)
+                .is_empty()
+        );
     }
 
     #[test]

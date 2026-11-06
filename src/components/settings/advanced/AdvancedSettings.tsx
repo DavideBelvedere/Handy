@@ -28,6 +28,7 @@ import { AirPodsMode } from "../AirPodsMode";
 import { FillerWordRemoval } from "../FillerWordRemoval";
 import { ScratchThat } from "../ScratchThat";
 import { AutoLearn } from "../AutoLearn";
+import { WindowContextVocabulary } from "../WindowContextVocabulary";
 import { LiveTyping } from "../LiveTyping";
 import { VadBackendSelector } from "../VadBackendSelector";
 
@@ -63,6 +64,7 @@ export const AdvancedSettings: React.FC = () => {
         <CustomWords descriptionMode="tooltip" grouped />
         <WordReplacements grouped />
         <AutoLearn descriptionMode="tooltip" grouped={true} />
+        <WindowContextVocabulary descriptionMode="tooltip" grouped={true} />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

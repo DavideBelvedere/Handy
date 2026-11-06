@@ -35,6 +35,7 @@ mod tray;
 mod tray_i18n;
 mod utils;
 pub mod webkit_renderer;
+mod window_context;
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -615,6 +616,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
             if let Some(typer) = &typer {
                 typer.begin(true);
             }
+            tm.capture_window_context(&get_settings(app));
             tm.start_stream();
             let router = tm.stream_router();
             // 30 ms frames, the size the recorder's Silero VAD hands the router.
@@ -766,6 +768,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             shortcut::update_word_replacements,
+            shortcut::undo_learned_word,
             shortcut::suspend_all_bindings,
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
@@ -790,6 +793,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_transcribe_accelerator_setting,
             shortcut::change_transcribe_gpu_device,
             shortcut::get_available_accelerators,
+            shortcut::change_window_context_vocabulary_setting,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
             secure_input::get_secure_input_status,
