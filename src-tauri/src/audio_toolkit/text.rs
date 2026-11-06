@@ -876,7 +876,18 @@ fn correction_span(
         || old < lead
         || key(old..=old_last) == key(new..=new_last)
         // "Is it Monday? No, Tuesday": an answer, not a correction.
-        || words[old..cue].iter().any(|(_, w)| w.contains('?'))
+        || words[old..after].iter().any(|(_, w)| w.contains('?'))
+    {
+        return None;
+    }
+    // After a sentence break only a retraction ("Friday. No, Thursday") or a
+    // restated lead/tail ("six chairs. Sorry, I meant eight chairs") counts:
+    // "on Friday. Actually, Saturday would be cheaper" is a new sentence.
+    let retraction = matches!(correction_key(words[cue].1).as_str(), "no" | "now");
+    if words[old..cue].iter().any(|(_, w)| w.ends_with(['.', '!']))
+        && !retraction
+        && lead == 0
+        && tail.is_empty()
     {
         return None;
     }
@@ -1229,6 +1240,10 @@ mod tests {
             "Tell John I mean it, Sarah",
             "We met on Monday. Actually on Monday we also signed",
             "Il negozio è aperto lunedì martedì e giovedì",
+            "The flight is on Friday. Actually, Saturday would be cheaper.",
+            "I'll be there at 5. Sorry, 6 people are coming.",
+            "La riunione è lunedì. Scusa, martedì non ci sono.",
+            "Ho detto 5 no? 6 sono troppi",
         ] {
             assert_eq!(apply_spoken_corrections(speech), speech);
         }
