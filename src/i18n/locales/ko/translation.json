@@ -900,11 +900,6 @@
         "run": "Probe focused field (5 s)",
         "running": "Switch to the target app now… reading in 5 s",
         "failed": "Probe failed: {{error}}"
-      },
-      "paths": {
-        "appData": "앱 데이터:",
-        "models": "모델:",
-        "settings": "설정:"
       }
     },
     "about": {
