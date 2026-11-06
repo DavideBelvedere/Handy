@@ -911,14 +911,16 @@ impl ShortcutAction for TranscribeAction {
                                 );
                                 return;
                             }
-                            if let Finish::Handled(inserted) = live {
+                            if let Finish::Handled(inserted, edited) = live {
                                 // Sealed segments were typed even if the last one is empty.
                                 let outcome = if final_text.is_empty() && segment_start == 0 {
                                     empty_outcome(input_silent)
                                 } else {
                                     notices::clear(&ah, NoticeSource::Dictation);
                                     if get_settings(&ah).auto_learn_enabled {
-                                        correction_learner::spawn_correction_watcher(&ah, inserted);
+                                        correction_learner::spawn_correction_watcher(
+                                            &ah, inserted, edited,
+                                        );
                                     }
                                     TranscriptionOutcome::Typed
                                 };
@@ -977,7 +979,9 @@ impl ShortcutAction for TranscribeAction {
                                                 );
                                                 if let Some(text) = learn_text {
                                                     correction_learner::spawn_correction_watcher(
-                                                        &ah_clone, text,
+                                                        &ah_clone,
+                                                        text,
+                                                        Vec::new(),
                                                     );
                                                 }
                                                 // Leave a newer session's notice alone.

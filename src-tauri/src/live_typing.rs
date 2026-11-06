@@ -67,9 +67,10 @@ enum Cmd {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Finish {
-    /// Live typing typed the output; holds what the last step inserted, for
-    /// the correction watcher.
-    Handled(String),
+    /// Live typing typed the output. Holds, for the correction watcher, what
+    /// the last step inserted and each segment the user edited while
+    /// dictating.
+    Handled(String, Vec<EditedSegment>),
     /// The field could not be verified, so the output went to the clipboard.
     Copied,
     /// Nothing was typed live: do the normal paste.
@@ -183,7 +184,19 @@ struct Session {
     /// When `latest` last changed, and whether a pause has typed it since.
     changed_at: Instant,
     flushed: bool,
+    /// The field around the cursor as of the last verified read, kept up to
+    /// date with what was typed since: the "before" of a user edit.
+    around: Option<Around>,
+    /// Sealed segments the user edited, for auto-learn.
+    sealed: Vec<EditedSegment>,
 }
+
+/// A segment the user edited while dictating: (typed text, the field before
+/// the edit, the field when the edit was found, before any more typing).
+pub type EditedSegment = (String, String, String);
+
+/// The field's text before and after the cursor.
+type Around = (String, String);
 
 #[derive(Clone)]
 struct Pending {
@@ -335,6 +348,8 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
         latest: None,
         changed_at: Instant::now(),
         flushed: false,
+        around: None,
+        sealed: Vec::new(),
     })
 }
 
@@ -362,7 +377,15 @@ fn apply_edit(app: &AppHandle, s: &mut Session, edit: Delta, flush: bool) {
         Delta::Nothing | Delta::Diverged => return,
     };
     match type_on_main(app, backspaces, insert) {
-        Ok(()) => s.segment.apply(edit, flush),
+        Ok(()) => {
+            if let Some((before, _)) = s.around.as_mut() {
+                for _ in 0..backspaces {
+                    before.pop();
+                }
+                before.push_str(insert);
+            }
+            s.segment.apply(edit, flush);
+        }
         Err(e) => {
             warn!("Live typing: typing failed ({e}); stopping");
             s.active = false;
@@ -388,10 +411,16 @@ fn segment_delta(s: &mut Session, cleaned: &str, flush: bool) -> Option<Delta> {
         edit => edit,
     };
     match verify_field(&s.target, &s.segment.typed) {
-        FieldCheck::Verified => Some(edit),
+        FieldCheck::Verified => {
+            s.around = s.target.text_near_cursor().map(split_at_cursor);
+            Some(edit)
+        }
         // Appending deletes nothing, so an unreadable field only needs focus;
         // but a flushed tail could never be revised there.
-        FieldCheck::Unreadable if !flush && matches!(edit, Delta::Append(_)) => Some(edit),
+        FieldCheck::Unreadable if !flush && matches!(edit, Delta::Append(_)) => {
+            s.around = None;
+            Some(edit)
+        }
         FieldCheck::Unreadable if flush => None,
         FieldCheck::Unreadable => {
             debug!("Live typing: can't revise the tail of an unreadable field; stopping");
@@ -406,7 +435,14 @@ fn segment_delta(s: &mut Session, cleaned: &str, flush: bool) -> Option<Delta> {
         // Typing would replace the user's selection: wait for the next commit.
         FieldCheck::Selection => None,
         FieldCheck::Edited => {
-            let (carry_tail, lead) = cursor_context(s.target.text_near_cursor());
+            let around = s.target.text_near_cursor().map(split_at_cursor);
+            s.sealed.extend(edited_segment(
+                s.around.take(),
+                &s.segment.typed,
+                around.as_ref(),
+            ));
+            let (carry_tail, lead) = cursor_context(around.as_ref());
+            s.around = around;
             let dropped = s.segment.seal(carry_tail, lead);
             debug!(
                 "Live typing: field edited; new segment at the cursor from word {} ({dropped} pending words dropped)",
@@ -420,7 +456,8 @@ fn segment_delta(s: &mut Session, cleaned: &str, flush: bool) -> Option<Delta> {
     }
 }
 
-fn finish_session(app: &AppHandle, s: Session, final_text: &str, raw_text: &str) -> Finish {
+fn finish_session(app: &AppHandle, mut s: Session, final_text: &str, raw_text: &str) -> Finish {
+    let mut sealed = std::mem::take(&mut s.sealed);
     let seg = &s.segment;
     if seg.typed.is_empty() && seg.start_words == 0 {
         // Nothing was typed live: the normal paste does the job.
@@ -441,7 +478,9 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str, raw_text: &str)
     let mut edited_rest = String::new();
     if check == Some(FieldCheck::Edited) {
         // Kept raw: Post Process must not undo the user's edits.
-        let (carry_tail, lead) = cursor_context(s.target.text_near_cursor());
+        let around = s.target.text_near_cursor().map(split_at_cursor);
+        sealed.extend(edited_segment(s.around.take(), &seg.typed, around.as_ref()));
+        let (carry_tail, lead) = cursor_context(around.as_ref());
         if carry_tail {
             edited_rest = with_lead(lead, skip_words(raw_text, word_count(&seg.typed)));
             if s.settings.append_trailing_space && !edited_rest.is_empty() {
@@ -471,11 +510,11 @@ fn finish_session(app: &AppHandle, s: Session, final_text: &str, raw_text: &str)
                 text
             };
             finish_like_paste(app, &s.settings, inserted.clone());
-            return Finish::Handled(inserted);
+            return Finish::Handled(inserted, sealed);
         }
     }
     if final_text.is_empty() {
-        return Finish::Handled(String::new());
+        return Finish::Handled(String::new(), sealed);
     }
     warn!(
         "Live typing: field not verified after {} typed chars; final text copied to clipboard",
@@ -882,18 +921,39 @@ pub fn split_at_word(text: &str, n: usize) -> (&str, &str) {
     (sealed.trim_end(), live)
 }
 
-/// From the text around the cursor and the cursor's UTF-16 offset in it:
-/// whether the cursor is at the end of the text (only whitespace after it),
-/// and the lead a new segment needs ("" after whitespace or at the start).
-/// Unreadable: drop the tail, no lead.
-fn cursor_context(near: Option<(String, usize)>) -> (bool, &'static str) {
-    let Some((text, cursor)) = near else {
-        return (false, "");
-    };
+/// Splits text read around the cursor at the cursor's UTF-16 offset in it.
+fn split_at_cursor((text, cursor): (String, usize)) -> Around {
     let units: Vec<u16> = text.encode_utf16().collect();
     let cursor = cursor.min(units.len());
-    let before = String::from_utf16_lossy(&units[..cursor]);
-    let after = String::from_utf16_lossy(&units[cursor..]);
+    (
+        String::from_utf16_lossy(&units[..cursor]),
+        String::from_utf16_lossy(&units[cursor..]),
+    )
+}
+
+/// What auto-learn needs about a segment the user edited: its typed text,
+/// the field before the edit (`was`, holding it right before the cursor) and
+/// the field once the edit was found (`now`), before anything else is typed,
+/// so words dictated afterwards never look like part of the correction.
+fn edited_segment(was: Option<Around>, typed: &str, now: Option<&Around>) -> Option<EditedSegment> {
+    let (before, after) = was?;
+    let (now_before, now_after) = now?;
+    (!typed.trim().is_empty() && before.ends_with(typed)).then(|| {
+        (
+            typed.to_string(),
+            before + &after,
+            format!("{now_before}{now_after}"),
+        )
+    })
+}
+
+/// From the text around the cursor: whether the cursor is at the end of the
+/// text (only whitespace after it), and the lead a new segment needs ("" after
+/// whitespace or at the start). Unreadable: drop the tail, no lead.
+fn cursor_context(around: Option<&Around>) -> (bool, &'static str) {
+    let Some((before, after)) = around else {
+        return (false, "");
+    };
     let lead = match before.chars().next_back() {
         Some(c) if !c.is_whitespace() => " ",
         _ => "",
@@ -1142,6 +1202,38 @@ mod tests {
         );
     }
 
+    fn ctx(text: &str, cursor: usize) -> (bool, &'static str) {
+        cursor_context(Some(&split_at_cursor((text.to_string(), cursor))))
+    }
+
+    #[test]
+    fn edited_segment_is_learnable_without_later_dictation() {
+        let around = |b: &str, a: &str| (b.to_string(), a.to_string());
+        let typed = "Dear Andy send it";
+        let (inserted, before, after) = edited_segment(
+            Some(around("Hi. Dear Andy send it", "")),
+            typed,
+            Some(&around("Hi. Dear Handy", " send it")),
+        )
+        .unwrap();
+        assert_eq!(after, "Hi. Dear Handy send it");
+        assert_eq!(
+            crate::correction_learner::learn(&inserted, &before, &after, &[]).pairs,
+            vec![("Andy".to_string(), "Handy".to_string())]
+        );
+        let now = around("x", "");
+        assert_eq!(
+            edited_segment(Some(around("send it", "")), "it to", Some(&now)),
+            None
+        );
+        assert_eq!(
+            edited_segment(Some(around("send", "")), "", Some(&now)),
+            None
+        );
+        assert_eq!(edited_segment(None, "send", Some(&now)), None);
+        assert_eq!(edited_segment(Some(around("send", "")), "send", None), None);
+    }
+
     /// A segment fed the cleaned commits in `commits`, typing every delta.
     fn typed_through(seg: &mut Segment, commits: &[&str]) {
         for cleaned in commits {
@@ -1190,7 +1282,7 @@ mod tests {
         assert_eq!(seg.typed, "Dear Bob send it");
         // The user fixed "Bob" and left the cursor after it, mid-text: the
         // pending "Thursday at noon" would land in the wrong place.
-        let (carry, lead) = cursor_context(Some(("Dear Rob send it".into(), 8)));
+        let (carry, lead) = ctx("Dear Rob send it", 8);
         assert_eq!((carry, lead), (false, " "));
         assert_eq!(seg.seal(carry, lead), 3);
         assert_eq!(seg.start_words, 7);
@@ -1208,7 +1300,7 @@ mod tests {
         typed_through(&mut seg, &["send it Thursday at noon please"]);
         assert_eq!(seg.typed, "send it Thursday");
         // The user retyped the last word at the end of the field and kept going.
-        let (carry, lead) = cursor_context(Some(("send it Friday\n".into(), 14)));
+        let (carry, lead) = ctx("send it Friday\n", 14);
         assert_eq!((carry, lead), (true, " "));
         assert_eq!(seg.seal(carry, lead), 0);
         assert_eq!(
@@ -1240,12 +1332,12 @@ mod tests {
     #[test]
     fn cursor_context_reads_lead_and_end() {
         assert_eq!(cursor_context(None), (false, ""));
-        assert_eq!(cursor_context(Some(("".into(), 0))), (true, ""));
-        assert_eq!(cursor_context(Some(("hi ".into(), 3))), (true, ""));
-        assert_eq!(cursor_context(Some(("hi there".into(), 2))), (false, " "));
+        assert_eq!(ctx("", 0), (true, ""));
+        assert_eq!(ctx("hi ", 3), (true, ""));
+        assert_eq!(ctx("hi there", 2), (false, " "));
         // UTF-16 offsets: the emoji is two units.
-        assert_eq!(cursor_context(Some(("😀x".into(), 2))), (false, " "));
-        assert_eq!(cursor_context(Some(("x".into(), 99))), (true, " "));
+        assert_eq!(ctx("😀x", 2), (false, " "));
+        assert_eq!(ctx("x", 99), (true, " "));
     }
 
     #[test]

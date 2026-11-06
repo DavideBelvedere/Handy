@@ -634,9 +634,9 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
                         let finish = typer.finish(live.to_string(), live.to_string());
                         eprintln!("live typing: {finish:?}");
                         let watch_secs = args.live_type.unwrap_or(0);
-                        if let live_typing::Finish::Handled(inserted) = finish {
+                        if let live_typing::Finish::Handled(inserted, edited) = finish {
                             if watch_secs > 0 && get_settings(app).auto_learn_enabled {
-                                correction_learner::spawn_correction_watcher(app, inserted);
+                                correction_learner::spawn_correction_watcher(app, inserted, edited);
                                 std::thread::sleep(std::time::Duration::from_secs(watch_secs));
                             }
                         }

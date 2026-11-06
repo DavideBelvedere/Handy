@@ -473,15 +473,21 @@ pub fn cancel_watchers() {
 }
 
 /// Watches the focused field for up to 60 s after `inserted` was put into it,
-/// then learns the user's corrections. Returns immediately.
-pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
+/// then learns the user's corrections, together with those in `edited`,
+/// live-typing segments the user corrected while dictating. Returns
+/// immediately.
+pub fn spawn_correction_watcher(
+    app: &AppHandle,
+    inserted: String,
+    edited: Vec<crate::live_typing::EditedSegment>,
+) {
     let app = app.clone();
     // Captured before spawning so a dictation started meanwhile cancels us.
     let generation = WATCH_GENERATION.load(Ordering::SeqCst);
     std::thread::spawn(move || {
         let cancelled = || WATCH_GENERATION.load(Ordering::SeqCst) != generation;
         let needle = fold_typography(inserted.trim());
-        if needle.is_empty() {
+        if needle.is_empty() && edited.is_empty() {
             return;
         }
         // Typed (non-clipboard) pastes may land after `paste` returns, and
@@ -497,7 +503,10 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
                     return;
                 }
                 accessibility::enable_manual_accessibility(f.pid());
-                if let Some(v) = f.value().filter(|v| fold_typography(v).contains(&needle)) {
+                if let Some(v) = f
+                    .value()
+                    .filter(|v| needle.is_empty() || fold_typography(v).contains(&needle))
+                {
                     break (f, v);
                 }
             } else {
@@ -535,7 +544,12 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
         if !settings.auto_learn_enabled {
             return;
         }
-        let outcome = learn(&inserted, &before, &last, &settings.fuzzy_words());
+        let mut outcome = learn(&inserted, &before, &last, &settings.fuzzy_words());
+        for (typed, field_before, field_after) in &edited {
+            let more = learn(typed, field_before, field_after, &settings.fuzzy_words());
+            outcome.pairs.extend(more.pairs);
+            outcome.misfires.extend(more.misfires);
+        }
         if outcome == LearnOutcome::default() {
             debug!(
                 "Auto-learn: no correction to learn (field changed: {})",
