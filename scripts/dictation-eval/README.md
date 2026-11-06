@@ -63,6 +63,14 @@ Since `1d29616`, a name-like target learned from 2+ different mishearings (Vande
   ```bash
   cd src-tauri && BACKTRACK_INPUTS_FILE=/path/inputs.txt cargo test --lib backtrack_prompt_with_apple -- --ignored --nocapture
   ```
+  It prints one `SELFCORR {json}` line per input. `BACKTRACK_SCRATCH=1` runs the offline rules first (`apply_scratch_that` + `apply_spoken_corrections`, as the app does); `BACKTRACK_NO_LLM=1` prints only their output. `${output}` is stripped from the prompt file, as `build_system_prompt` does.
+- **Self-corrections (`selfcorr.jsonl`, `selfcorr.py`):** a fixed Italian + English set of spoken self-corrections (`cue`, `bare` restatements with no cue, `scratch`), `guard` phrases where "anzi", "scusa", "cioè", "sorry", "no", "actually" are ordinary words, and `asr_garbled` cases (reported apart: the ASR changed the meaning). Graded by `keep`/`drop` words, so the offline rule (no formatting) and the LLM are scored alike. Not in `cases.jsonl`: `eval.sh cases` regenerates that file.
+  ```bash
+  python3 scripts/dictation-eval/selfcorr.py run rule --offline-only               # offline rules only
+  python3 scripts/dictation-eval/selfcorr.py run p1 --prompt FILE --runs 3          # offline rules, then Apple Intelligence
+  python3 scripts/dictation-eval/selfcorr.py run p1raw --raw --prompt FILE --runs 3 # LLM alone on the raw text
+  python3 scripts/dictation-eval/selfcorr.py grade rule p1 p1raw
+  ```
 - **Live typing replay:** `eval.sh replay` (`--stream --live-type 6` into the Chrome page). Needs the Handy app quit (shared settings file) and Accessibility permission for the terminal. Never run end to end yet; `asr` covers everything but live typing.
 - **Final check** is always a human run of both suites; compare with `eval.sh trend`. Trend/recall use `runs/<run>.end.json` (learned pairs at the end of the run, written by the server); for iteration 1 these were frozen from the store on 2026-10-10 22:00, so older runs' "new"/"recall" are approximate but no longer drift.
 

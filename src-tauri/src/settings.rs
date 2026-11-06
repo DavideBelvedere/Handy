@@ -2346,11 +2346,16 @@ mod tests {
     #[ignore]
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn backtrack_prompt_with_apple_intelligence() {
-        assert!(crate::apple_intelligence::check_apple_intelligence_availability());
         let system = match std::env::var("BACKTRACK_PROMPT_FILE") {
             Ok(f) => std::fs::read_to_string(f).unwrap(),
-            Err(_) => default_backtrack_prompt().prompt.replace("${output}", ""),
+            Err(_) => default_backtrack_prompt().prompt,
         };
+        // As actions.rs build_system_prompt sends it.
+        let system = system.replace("${output}", "");
+        // BACKTRACK_SCRATCH=1: run the offline rule first, as the pipeline does.
+        let scratch = std::env::var("BACKTRACK_SCRATCH").is_ok_and(|v| v == "1");
+        // BACKTRACK_NO_LLM=1: print the offline rule's output only.
+        let no_llm = std::env::var("BACKTRACK_NO_LLM").is_ok_and(|v| v == "1");
         // BACKTRACK_INPUTS_FILE: one transcript per line (e.g. raw_asr of the
         // dictation eval's pp cases) instead of the built-in list.
         let inputs: Vec<String> = match std::env::var("BACKTRACK_INPUTS_FILE") {
@@ -2383,9 +2388,24 @@ mod tests {
             inputs.iter().map(String::as_str).collect()
         };
         for text in texts {
-            let out =
-                crate::apple_intelligence::process_text_with_system_prompt(system.trim(), text, 0);
-            println!("{text:?} -> {out:?}");
+            let input = if scratch {
+                crate::audio_toolkit::apply_spoken_corrections(
+                    &crate::audio_toolkit::apply_scratch_that(text),
+                )
+            } else {
+                text.to_string()
+            };
+            let out = if no_llm {
+                Ok(input.clone())
+            } else {
+                assert!(crate::apple_intelligence::check_apple_intelligence_availability());
+                crate::apple_intelligence::process_text_with_system_prompt(system.trim(), &input, 0)
+            };
+            // One JSON line per case for scripts/dictation-eval/selfcorr.py.
+            println!(
+                "SELFCORR {}",
+                serde_json::json!({"in": text, "llm_in": input, "out": out.unwrap_or_else(|e| format!("ERROR: {e}"))})
+            );
         }
     }
 }
