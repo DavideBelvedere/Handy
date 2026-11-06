@@ -6,9 +6,13 @@
 //! memory only: only the learned pair is persisted.
 
 use crate::accessibility;
-use crate::settings::{get_settings, write_settings, WordReplacement};
-use log::{debug, info};
-use serde::Serialize;
+use crate::actions::{disables_reasoning, post_process_llm, strip_think_block};
+use crate::settings::{
+    get_settings, write_settings, AppSettings, PostProcessProvider, WordReplacement,
+    APPLE_INTELLIGENCE_PROVIDER_ID,
+};
+use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -152,6 +156,7 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
     match list.iter_mut().find(|r| r.from.to_lowercase() == key) {
         Some(r) if r.learned && r.to != to => {
             r.to = to.to_string();
+            r.last_used = crate::utils::unix_now();
             true
         }
         Some(_) => false,
@@ -160,6 +165,8 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
                 from: from.to_string(),
                 to: to.to_string(),
                 learned: true,
+                last_used: crate::utils::unix_now(),
+                ..Default::default()
             });
             true
         }
@@ -276,6 +283,156 @@ fn misfired_custom_word(from_key: &str, custom_words: &[String]) -> Option<Strin
         .cloned()
 }
 
+const GATE_MAX_CANDIDATES: usize = 4;
+const GATE_TIMEOUT: Duration = Duration::from_secs(5);
+const GATE_PROMPT: &str = "You check corrections a user made to text produced by speech recognition. \
+Each line is `misheard -> corrected`. Accept a correction only when the corrected text is vocabulary \
+a speech recognizer could not know: a name of a person, place or organization, a brand or product, \
+an acronym, jargon or a technical term. Reject stylistic rewrites, synonyms, grammar or tense changes, \
+fixes to ordinary words, and anything you are unsure about. Answer with JSON only, no other text: \
+{\"accepted\": [...]}, listing each accepted corrected value exactly as written, or an empty list.";
+
+/// The pairs sent to the LLM gate: at most 4, those whose `to` has an
+/// uppercase letter (likely a name or brand) first. The rest are dropped.
+fn gate_candidates(mut pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    pairs.sort_by_key(|(_, to)| !to.chars().any(char::is_uppercase));
+    pairs.truncate(GATE_MAX_CANDIDATES);
+    pairs
+}
+
+/// One `from -> to` line per candidate: the only text sent to the LLM.
+fn gate_user_content(candidates: &[(String, String)]) -> String {
+    candidates
+        .iter()
+        .map(|(from, to)| format!("{from} -> {to}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The accepted `to` values in the LLM's reply that are exact candidates.
+/// Tolerates a think block or code fence around the JSON object.
+fn parse_gate_reply(reply: &str, candidates: &[(String, String)]) -> Result<Vec<String>, String> {
+    #[derive(Deserialize)]
+    struct Reply {
+        accepted: Vec<String>,
+    }
+    let reply = strip_think_block(reply);
+    let json = match (reply.find('{'), reply.rfind('}')) {
+        (Some(start), Some(end)) if start < end => &reply[start..=end],
+        _ => return Err("no JSON object in the reply".to_string()),
+    };
+    let reply: Reply = serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
+    Ok(reply
+        .accepted
+        .into_iter()
+        .filter(|word| candidates.iter().any(|(_, to)| to == word))
+        .collect())
+}
+
+/// Keeps only the pairs the LLM accepts as real vocabulary. `ask(system,
+/// user)` makes the one request; any failure learns nothing (fail closed).
+fn llm_gate(
+    pairs: Vec<(String, String)>,
+    ask: impl FnOnce(&str, &str) -> Result<String, String>,
+) -> Vec<(String, String)> {
+    let candidates = gate_candidates(pairs);
+    let accepted = match ask(GATE_PROMPT, &gate_user_content(&candidates))
+        .and_then(|reply| parse_gate_reply(&reply, &candidates))
+    {
+        Ok(accepted) => accepted,
+        Err(err) => {
+            warn!("Auto-learn: LLM filter failed, learning nothing: {err}");
+            return Vec::new();
+        }
+    };
+    let kept: Vec<_> = candidates
+        .into_iter()
+        .filter(|(_, to)| accepted.contains(to))
+        .collect();
+    debug!("Auto-learn: LLM filter kept {} pair(s)", kept.len());
+    kept
+}
+
+/// The user's post-processing LLM, if one is configured and usable.
+fn gate_llm(settings: &AppSettings) -> Option<(PostProcessProvider, String, String)> {
+    let llm = post_process_llm(settings)?;
+    if llm.0.id == APPLE_INTELLIGENCE_PROVIDER_ID {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        if !crate::apple_intelligence::check_apple_intelligence_availability() {
+            return None;
+        }
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        return None;
+    }
+    Some(llm)
+}
+
+/// Sends one gate request, mirroring how post-processing calls each kind of
+/// provider, and gives up after `GATE_TIMEOUT`.
+fn ask_llm(
+    (provider, model, api_key): (PostProcessProvider, String, String),
+    system: &str,
+    user: &str,
+) -> Result<String, String> {
+    let (system, user) = (system.to_string(), user.to_string());
+    let request = async move {
+        if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            {
+                let token_limit = model.trim().parse::<i32>().unwrap_or(0);
+                return tauri::async_runtime::spawn_blocking(move || {
+                    crate::apple_intelligence::process_text_with_system_prompt(
+                        &system,
+                        &user,
+                        token_limit,
+                    )
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+            return Err("Apple Intelligence is unsupported here".to_string());
+        }
+        let disable_reasoning = disables_reasoning(&provider);
+        if provider.supports_structured_output {
+            let schema = serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "accepted": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["accepted"],
+                "additionalProperties": false
+            });
+            match crate::llm_client::send_chat_completion_with_schema(
+                &provider,
+                api_key.clone(),
+                &model,
+                user.clone(),
+                Some(system.clone()),
+                Some(schema),
+                disable_reasoning,
+            )
+            .await
+            {
+                Ok(reply) => return reply.ok_or_else(|| "empty response".to_string()),
+                // Some endpoints reject the schema; post-processing falls back too.
+                Err(err) => debug!("Auto-learn: structured output failed ({err}), retrying plain"),
+            }
+        }
+        crate::llm_client::send_chat_completion(
+            &provider,
+            api_key,
+            &model,
+            format!("{system}\n\n{user}"),
+            disable_reasoning,
+        )
+        .await?
+        .ok_or_else(|| "empty response".to_string())
+    };
+    tauri::async_runtime::block_on(tokio::time::timeout(GATE_TIMEOUT, request))
+        .map_err(|_| format!("no answer within {}s", GATE_TIMEOUT.as_secs()))?
+}
+
 static WATCH_GENERATION: AtomicU64 = AtomicU64::new(0);
 const SETTLE_DELAY: Duration = Duration::from_millis(150);
 const BASELINE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -354,7 +511,7 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
             }
         }
 
-        let mut settings = get_settings(&app);
+        let settings = get_settings(&app);
         if !settings.auto_learn_enabled {
             return;
         }
@@ -365,8 +522,17 @@ pub fn spawn_correction_watcher(app: &AppHandle, inserted: String) {
                 last != before
             );
         }
-        let learned: Vec<_> = outcome
-            .pairs
+        let mut pairs = outcome.pairs;
+        if settings.auto_learn_llm_filter && !pairs.is_empty() {
+            match gate_llm(&settings) {
+                Some(llm) => pairs = llm_gate(pairs, |system, user| ask_llm(llm, system, user)),
+                None => debug!("Auto-learn: LLM filter on but no LLM configured"),
+            }
+        }
+        // Re-read: the LLM call can take seconds, and the user may have
+        // changed a setting meanwhile.
+        let mut settings = get_settings(&app);
+        let learned: Vec<_> = pairs
             .into_iter()
             .filter(|(from, to)| upsert_learned(&mut settings.word_replacements, from, to))
             .collect();
@@ -596,6 +762,7 @@ mod tests {
             from: "Gpt".into(),
             to: "GPT".into(),
             learned: false,
+            ..Default::default()
         }];
         assert!(upsert_learned(&mut list, "andy", "Handy"));
         assert_eq!(list.len(), 2);
@@ -609,6 +776,101 @@ mod tests {
         assert!(!upsert_learned(&mut list, "gpt", "G.P.T."));
         assert_eq!(list[0].to, "GPT");
         assert_eq!(list.len(), 2);
+    }
+
+    fn owned(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(f, t)| (f.to_string(), t.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn gate_candidates_rank_capitalized_first_and_cap_at_four() {
+        let pairs = owned(&[
+            ("colour", "color"),
+            ("andy", "Handy"),
+            ("recieve", "receive"),
+            ("lang chain", "LangChain"),
+            ("teh", "tea"),
+            ("kuber", "k8s"),
+            ("open ai", "OpenAI"),
+        ]);
+        assert_eq!(
+            gate_candidates(pairs),
+            owned(&[
+                ("andy", "Handy"),
+                ("lang chain", "LangChain"),
+                ("open ai", "OpenAI"),
+                ("colour", "color"),
+            ])
+        );
+    }
+
+    #[test]
+    fn gate_prompt_holds_only_the_candidate_pairs() {
+        let candidates = owned(&[("andy", "Handy"), ("lang chain", "LangChain")]);
+        assert_eq!(
+            gate_user_content(&candidates),
+            "andy -> Handy\nlang chain -> LangChain"
+        );
+        assert!(GATE_PROMPT.contains("\"accepted\""));
+    }
+
+    #[test]
+    fn gate_reply_parsing() {
+        let candidates = owned(&[("andy", "Handy"), ("colour", "color")]);
+        let parse = |reply: &str| parse_gate_reply(reply, &candidates);
+        assert_eq!(
+            parse(r#"{"accepted": ["Handy"]}"#),
+            Ok(vec!["Handy".into()])
+        );
+        assert_eq!(parse(r#"{"accepted": []}"#), Ok(vec![]));
+        assert_eq!(
+            parse("<think>hmm</think>```json\n{\"accepted\": [\"Handy\"]}\n```"),
+            Ok(vec!["Handy".into()])
+        );
+        // Only exact candidate `to` values count.
+        assert_eq!(
+            parse(r#"{"accepted": ["handy", "andy", "Kubernetes", "Handy"]}"#),
+            Ok(vec!["Handy".into()])
+        );
+        assert!(parse("Handy").is_err());
+        assert!(parse(r#"{"accepted": "Handy"}"#).is_err());
+        assert!(parse(r#"{"words": ["Handy"]}"#).is_err());
+        assert!(parse(r#"{"accepted": ["Handy"]"#).is_err());
+    }
+
+    #[test]
+    fn llm_gate_keeps_accepted_and_fails_closed() {
+        let pairs = owned(&[("andy", "Handy"), ("colour", "color")]);
+        let kept = llm_gate(pairs.clone(), |system, user| {
+            assert_eq!(system, GATE_PROMPT);
+            assert_eq!(user, "andy -> Handy\ncolour -> color");
+            Ok(r#"{"accepted": ["Handy"]}"#.into())
+        });
+        assert_eq!(kept, owned(&[("andy", "Handy")]));
+
+        assert!(llm_gate(pairs.clone(), |_, _| Err("HTTP 401".into())).is_empty());
+        assert!(llm_gate(pairs.clone(), |_, _| Ok("Sure! Handy".into())).is_empty());
+        assert!(llm_gate(pairs, |_, _| Ok(r#"{"accepted": ["Kubernetes"]}"#.into())).is_empty());
+    }
+
+    #[test]
+    fn llm_gate_drops_pairs_past_the_cap() {
+        let pairs = owned(&[
+            ("a1", "Alpha"),
+            ("b1", "Bravo"),
+            ("c1", "Charlie"),
+            ("d1", "Delta"),
+            ("e1", "Echo"),
+        ]);
+        let kept = llm_gate(pairs, |_, user| {
+            assert!(!user.contains("Echo"));
+            Ok(r#"{"accepted": ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]}"#.into())
+        });
+        assert_eq!(kept.len(), 4);
+        assert!(!kept.iter().any(|(_, to)| to == "Echo"));
     }
 
     #[test]

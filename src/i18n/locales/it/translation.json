@@ -607,6 +607,10 @@
         "title": "Apprendi dalle correzioni",
         "description": "Per circa 60 secondi dopo un dettato, osserva il campo in cui hai scritto e impara coppie esatte di parole dalle correzioni che fai a mano. Le coppie imparate compaiono in Sostituzioni di parole. Solo macOS; non legge mai i campi password."
       },
+      "autoLearnLlmFilter": {
+        "title": "Filter learned words with AI",
+        "description": "Before saving a learned pair, asks your post-processing provider whether the corrected word is real vocabulary (a name, brand, acronym or technical term). Only the corrected words are sent, never the rest of the text. If the provider fails or doesn't answer, nothing is learned."
+      },
       "voiceActivityDetection": {
         "title": "Rilevamento dell'attività vocale",
         "description": "Filtra il silenzio dalle registrazioni. I modelli che supportano lo streaming utilizzano una coda VAD più lunga; disabilitando la VAD si registra l'audio grezzo."

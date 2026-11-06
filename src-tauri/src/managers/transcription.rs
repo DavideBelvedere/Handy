@@ -1,7 +1,8 @@
 use crate::audio_toolkit::chunking;
 use crate::audio_toolkit::{
-    apply_custom_words, apply_scratch_that, apply_word_replacements, detect_output_language,
-    normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
+    apply_custom_words, apply_scratch_that, apply_word_replacements, contains_term,
+    detect_output_language, normalize_transcription_output, remove_filler_words,
+    OutputLanguageEvidence,
 };
 use crate::chinese_script::{convert_chinese_script, ChineseVariety};
 use crate::engine_supervisor::{
@@ -18,7 +19,8 @@ use crate::managers::model::ModelManager;
 use crate::notices::{self, Notice, NoticeCode, NoticeSource};
 use crate::overlay;
 use crate::settings::{
-    get_settings, AppSettings, ChineseScript, ModelUnloadTimeout, TranscribeAcceleratorSetting,
+    get_settings, write_settings, AppSettings, ChineseScript, ModelUnloadTimeout,
+    TranscribeAcceleratorSetting, WordReplacement,
 };
 use anyhow::Result;
 use chunked::{ChunkSetup, ChunkedDecode};
@@ -1046,6 +1048,22 @@ impl TranscriptionManager {
 
         self.maybe_unload_immediately("transcription");
 
+        // Fresh read: the decode took a while and auto-learn or the UI may have
+        // written settings since `settings` was read.
+        let mut latest = get_settings(&self.app_handle);
+        if record_learned_usage(
+            &mut latest.word_replacements,
+            &final_result,
+            crate::utils::unix_now(),
+        ) {
+            write_settings(&self.app_handle, latest);
+            // Otherwise the UI's stale list would reset the counts on its next edit.
+            let _ = self.app_handle.emit(
+                "settings-changed",
+                serde_json::json!({ "setting": "word_replacements" }),
+            );
+        }
+
         Ok(Transcription {
             text: final_result,
             language: Some(language),
@@ -1254,11 +1272,10 @@ fn finish_text(outcome: RunOutcome, settings: &AppSettings) -> String {
     } = outcome;
     let output_language = setup.output_language(settings, model_detected_language);
     debug!("Output language evidence: {:?}", output_language);
-    // Skip fuzzy correction if the model already got the custom words.
     post_process_transcription_text(
         text,
         settings,
-        setup.custom_words_prompted(),
+        &setup.run_options.vocabulary,
         &output_language,
         &setup.languages,
     )
@@ -1276,11 +1293,6 @@ struct RunSetup {
 }
 
 impl RunSetup {
-    /// Custom words went to the model as vocabulary; skip fuzzy correction.
-    fn custom_words_prompted(&self) -> bool {
-        !self.run_options.vocabulary.is_empty()
-    }
-
     /// The language the runs were in. When the model decided, the language
     /// it reported (if any).
     fn spoken_language(&self, model_detected_language: Option<&str>) -> LanguageDecision {
@@ -1364,7 +1376,12 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         task: run_plan.task,
         language: run_plan.language,
         target_language: run_plan.target_language,
-        vocabulary: vocabulary_for_model(info.supports_vocabulary, &settings.custom_words),
+        vocabulary: vocabulary_for_model(
+            info.supports_vocabulary,
+            &settings.custom_words,
+            &settings.word_replacements,
+            crate::utils::unix_now(),
+        ),
         ..Default::default()
     };
 
@@ -1597,15 +1614,88 @@ fn with_model_detected_language(
     }
 }
 
-/// Custom words for transcribe-cpp's `vocabulary` slot, in priority order.
+/// Most terms sent as vocabulary. transcribe-cpp has no count limit but fits
+/// the terms into a per-family token budget, dropping them from the end.
+// shortcut: a fixed count sized for Whisper's 223-token prompt slot (~4 tokens a term); budget by tokens per model if other families need more.
+const VOCABULARY_CAP: usize = 50;
+
+/// Terms for transcribe-cpp's `vocabulary` slot, highest priority first since
+/// an over-budget list loses its tail: custom words as entered, then the
+/// targets of learned replacements, most recently used (< 24 h, < 14 days,
+/// older) and then most used first. Capped at [`VOCABULARY_CAP`].
+///
+/// Every learned target qualifies, not only [`AppSettings::learned_names`]:
+/// vocabulary only biases the decode, so one correction is enough evidence,
+/// while fuzzy rewriting needs the stricter filter.
+///
 /// Empty for models without Feature::Vocabulary, which would warn on every run
 /// and rely on fuzzy correction instead.
-fn vocabulary_for_model(supports_vocabulary: bool, custom_words: &[String]) -> Vec<String> {
-    if supports_vocabulary {
-        custom_words.to_vec()
-    } else {
-        Vec::new()
+fn vocabulary_for_model(
+    supports_vocabulary: bool,
+    custom_words: &[String],
+    word_replacements: &[WordReplacement],
+    now: u64,
+) -> Vec<String> {
+    if !supports_vocabulary {
+        return Vec::new();
     }
+    const DAY: u64 = 24 * 60 * 60;
+    // One entry per target; several pairs can share one ("Van der Muren",
+    // "Van der Muhlen" -> "Vandermeulen") and are bumped together:
+    // (target, last used, times used).
+    let mut learned: Vec<(&str, u64, u32)> = Vec::new();
+    for r in word_replacements.iter().filter(|r| r.learned) {
+        match learned.iter_mut().find(|l| l.0.eq_ignore_ascii_case(&r.to)) {
+            Some(l) => *l = (l.0, l.1.max(r.last_used), l.2.max(r.times_used)),
+            None => learned.push((&r.to, r.last_used, r.times_used)),
+        }
+    }
+    learned.sort_by_key(|&(_, last_used, times_used)| {
+        let age = now.saturating_sub(last_used);
+        let bucket = if last_used == 0 {
+            2
+        } else if age < DAY {
+            0
+        } else if age < 14 * DAY {
+            1
+        } else {
+            2
+        };
+        (bucket, std::cmp::Reverse(times_used))
+    });
+
+    let mut terms: Vec<String> = Vec::new();
+    for term in custom_words
+        .iter()
+        .map(String::as_str)
+        .chain(learned.iter().map(|l| l.0))
+        .map(|t| t.trim())
+    {
+        // Learned terms come from field text: a control-token literal or a NUL
+        // would fail the whole run, not just this term.
+        let unsafe_term = term.contains(['<', '>', '[', ']']) || term.contains(char::is_control);
+        if !term.is_empty() && !unsafe_term && !terms.iter().any(|t| t.eq_ignore_ascii_case(term)) {
+            terms.push(term.to_string());
+        }
+        if terms.len() == VOCABULARY_CAP {
+            break;
+        }
+    }
+    terms
+}
+
+/// Marks every learned pair whose `to` appears in `text` as used now. Returns
+/// true if any changed.
+fn record_learned_usage(word_replacements: &mut [WordReplacement], text: &str, now: u64) -> bool {
+    let mut changed = false;
+    for r in word_replacements.iter_mut().filter(|r| r.learned) {
+        if contains_term(text, &r.to) {
+            r.last_used = now;
+            r.times_used = r.times_used.saturating_add(1);
+            changed = true;
+        }
+    }
+    changed
 }
 
 struct TranscribeCppRunPlan {
@@ -1644,10 +1734,12 @@ fn transcribe_cpp_run_plan(
     }
 }
 
+/// `prompted` is the vocabulary the model was given: those terms skip fuzzy
+/// correction.
 pub(crate) fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
-    custom_words_already_prompted: bool,
+    prompted: &[String],
     output_language: &OutputLanguageEvidence,
     supported_languages: &[String],
 ) -> String {
@@ -1693,12 +1785,18 @@ pub(crate) fn post_process_transcription_text(
             raw
         };
 
-        // Learned names are never part of a decode prompt, so they apply either way.
-        let fuzzy_words = if custom_words_already_prompted {
-            settings.learned_names()
-        } else {
-            settings.fuzzy_words()
-        };
+        // Custom words the model got as vocabulary are trusted as decoded;
+        // ones the cap left out still need fuzzy correction. Learned names
+        // always apply: they exist because the model keeps misspelling them,
+        // a prompted term can still be dropped over the model's token budget,
+        // and fuzzy-matching an already-right name leaves it unchanged.
+        let mut fuzzy_words: Vec<String> = settings
+            .custom_words
+            .iter()
+            .filter(|w| !prompted.iter().any(|p| p.eq_ignore_ascii_case(w.trim())))
+            .cloned()
+            .collect();
+        fuzzy_words.extend(settings.learned_names());
         let corrected = if !fuzzy_words.is_empty() {
             apply_custom_words(&raw, &fuzzy_words, settings.word_correction_threshold)
         } else {
@@ -2080,7 +2178,7 @@ mod tests {
             let result = post_process_transcription_text(
                 "学校に行きます".to_string(),
                 &settings,
-                false,
+                &[],
                 &evidence,
                 &languages(&["zh", "ja", "en"]),
             );
@@ -2100,7 +2198,7 @@ mod tests {
             post_process_transcription_text(
                 "Buy milk. Scratch that. Buy bread.".to_string(),
                 &settings,
-                false,
+                &[],
                 &OutputLanguageEvidence::UserSelected("en".to_string()),
                 &languages(&["en"]),
             )
@@ -2120,6 +2218,7 @@ mod tests {
                 from: "MacBook Pro".to_string(),
                 to: "laptop".to_string(),
                 learned: true,
+                ..Default::default()
             }],
             filler_word_removal_enabled: false,
             ..Default::default()
@@ -2127,7 +2226,7 @@ mod tests {
         let result = post_process_transcription_text(
             "using Mac Book Pro".to_string(),
             &settings,
-            false,
+            &[],
             &OutputLanguageEvidence::UserSelected("en".to_string()),
             &languages(&["en"]),
         );
@@ -2144,7 +2243,7 @@ mod tests {
         let result = post_process_transcription_text(
             "我們今天下午一起去學校圖書館看書，然後再去吃晚飯。".to_string(),
             &settings,
-            false,
+            &[],
             &OutputLanguageEvidence::Unknown,
             &languages(&["zh", "en", "ja"]),
         );
@@ -2166,7 +2265,7 @@ mod tests {
         let result = post_process_transcription_text(
             "eu vi um carro".to_string(),
             &settings,
-            false,
+            &[],
             &evidence,
             &supported,
         );
@@ -2218,7 +2317,7 @@ mod tests {
         let result = post_process_transcription_text(
             "um uhm ok".to_string(),
             &settings,
-            false,
+            &[],
             &evidence,
             &languages(&["en", "pt"]),
         );
@@ -2238,7 +2337,7 @@ mod tests {
             "um so the weather forecast said it would probably rain throughout the whole weekend"
                 .to_string(),
             &settings,
-            false,
+            &[],
             &OutputLanguageEvidence::Unknown,
             &languages(&["en", "pt", "es", "de"]),
         );
@@ -2259,7 +2358,7 @@ mod tests {
         let result = post_process_transcription_text(
             "eu vi um carro na rua ontem de manhã quando fui ao mercado".to_string(),
             &settings,
-            false,
+            &[],
             &OutputLanguageEvidence::Unknown,
             &languages(&["en", "pt", "es", "de"]),
         );
@@ -2346,7 +2445,7 @@ mod tests {
         let result = post_process_transcription_text(
             "eu vi um carro".to_string(),
             &settings,
-            false,
+            &[],
             &evidence,
             &supported,
         );
@@ -2434,7 +2533,7 @@ mod tests {
         let prompted = post_process_transcription_text(
             "i use handy every day".to_string(),
             &settings,
-            true,
+            &settings.custom_words,
             &evidence,
             &supported,
         );
@@ -2444,11 +2543,151 @@ mod tests {
         let corrected = post_process_transcription_text(
             "i use handy every day".to_string(),
             &settings,
-            false,
+            &[],
             &evidence,
             &supported,
         );
         assert_eq!(corrected, "i use Handy every day");
+
+        // A custom word the cap kept out of the vocabulary is still corrected.
+        let settings = AppSettings {
+            custom_words: vec!["Handy".to_string(), "Ollama".to_string()],
+            ..settings
+        };
+        let capped = post_process_transcription_text(
+            "i use handy every day".to_string(),
+            &settings,
+            &["Ollama".to_string()],
+            &evidence,
+            &supported,
+        );
+        assert_eq!(capped, "i use Handy every day");
+    }
+
+    const DAY: u64 = 24 * 60 * 60;
+
+    fn learned(from: &str, to: &str, last_used: u64, times_used: u32) -> WordReplacement {
+        WordReplacement {
+            from: from.to_string(),
+            to: to.to_string(),
+            learned: true,
+            last_used,
+            times_used,
+        }
+    }
+
+    #[test]
+    fn vocabulary_ranks_custom_words_then_learned_by_recency_then_use() {
+        let now = 100 * DAY;
+        let replacements = vec![
+            learned("old", "Thessaroon", now - 30 * DAY, 9),
+            learned("week", "Killashandra", now - 3 * DAY, 1),
+            learned("fresh", "Ollama", now - 3600, 1),
+            learned("fresh busy", "Vandermeulen", now - 7200, 5),
+            learned("unknown", "Okonkwo", 0, 20),
+            // Same target as a custom word, and a second pair for one target.
+            learned("andy", "handy", now, 50),
+            learned("Van der Muren", "Vandermeulen", now - 10 * DAY, 1),
+            // Would fail the whole run if sent.
+            learned("en", "<|en|>", now, 50),
+            WordReplacement {
+                from: "Gpt".into(),
+                to: "Manual".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            vocabulary_for_model(true, &["Handy".to_string()], &replacements, now),
+            [
+                "Handy",
+                "Vandermeulen",
+                "Ollama",
+                "Killashandra",
+                "Okonkwo",
+                "Thessaroon"
+            ]
+        );
+    }
+
+    #[test]
+    fn learned_names_are_fuzzy_corrected_whatever_was_sent() {
+        let settings = AppSettings {
+            custom_words: vec!["Handy".to_string()],
+            word_replacements: vec![
+                learned("Van der Muren", "Vandermeulen", 0, 0),
+                learned("Van der Muhlen", "Vandermeulen", 0, 0),
+            ],
+            filler_word_removal_enabled: false,
+            ..Default::default()
+        };
+        let evidence = OutputLanguageEvidence::UserSelected("en".to_string());
+        for prompted in [vec![], vec!["Handy".to_string()]] {
+            assert_eq!(
+                post_process_transcription_text(
+                    "meet the Van der Mullen family".to_string(),
+                    &settings,
+                    &prompted,
+                    &evidence,
+                    &languages(&["en"]),
+                ),
+                "meet the Vandermeulen family"
+            );
+        }
+    }
+
+    #[test]
+    fn vocabulary_is_capped_keeping_the_highest_priority_terms() {
+        let custom_words: Vec<String> = (0..VOCABULARY_CAP + 10)
+            .map(|i| format!("word{i}"))
+            .collect();
+        let replacements = vec![learned("fresh", "Ollama", 100 * DAY, 3)];
+        let terms = vocabulary_for_model(true, &custom_words, &replacements, 100 * DAY);
+        assert_eq!(terms, custom_words[..VOCABULARY_CAP]);
+    }
+
+    #[test]
+    fn learned_words_reach_vocabulary_only_when_the_model_supports_it() {
+        let replacements = vec![learned("Holama", "Ollama", 100 * DAY, 3)];
+        assert_eq!(
+            vocabulary_for_model(true, &[], &replacements, 100 * DAY),
+            ["Ollama"]
+        );
+        assert!(vocabulary_for_model(false, &[], &replacements, 100 * DAY).is_empty());
+    }
+
+    #[test]
+    fn word_replacements_stored_without_usage_still_load() {
+        let r: WordReplacement =
+            serde_json::from_str(r#"{"from":"Holama","to":"Ollama","learned":true}"#).unwrap();
+        assert_eq!((r.last_used, r.times_used), (0, 0));
+        let r: WordReplacement = serde_json::from_str(r#"{"from":"a","to":"b"}"#).unwrap();
+        assert!(!r.learned);
+    }
+
+    #[test]
+    fn usage_is_recorded_for_learned_targets_in_the_final_text() {
+        let mut replacements = vec![
+            learned("Van der Muren", "Vandermeulen", 5, 1),
+            learned("Van der Muhlen", "Vandermeulen", 7, 2),
+            learned("Holama", "Ollama", 5, 1),
+            WordReplacement {
+                from: "Gpt".into(),
+                to: "GPT".into(),
+                ..Default::default()
+            },
+        ];
+        assert!(record_learned_usage(
+            &mut replacements,
+            "Met vandermeulen about GPT.",
+            100
+        ));
+        let usage: Vec<_> = replacements
+            .iter()
+            .map(|r| (r.last_used, r.times_used))
+            .collect();
+        assert_eq!(usage, [(100, 2), (100, 3), (5, 1), (0, 0)]);
+        // A target inside a longer word is not a use.
+        assert!(!record_learned_usage(&mut replacements, "Ollamas", 200));
     }
 }
 

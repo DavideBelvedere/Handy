@@ -447,6 +447,14 @@ async changeAutoLearnEnabledSetting(enabled: boolean) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeAutoLearnLlmFilterSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_learn_llm_filter_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeLiveTypingEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_live_typing_enabled_setting", { enabled }) };
@@ -1189,6 +1197,11 @@ reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: strin
  */
 auto_learn_enabled?: boolean; 
 /**
+ * Ask the post-processing LLM to accept only real vocabulary before
+ * auto-learn saves a correction.
+ */
+auto_learn_llm_filter?: boolean; 
+/**
  * Type streamed dictation into the focused field while speaking.
  */
 live_typing_enabled?: boolean; 
@@ -1620,7 +1633,17 @@ export type WordReplacement = { from: string; to: string;
  * True when auto-learn added this pair, false for manual UI entries.
  * Defaulted so replacements stored before this field existed still load.
  */
-learned?: boolean }
+learned?: boolean; 
+/**
+ * Learned pairs only: Unix seconds when this pair was learned or its `to`
+ * last appeared in a final transcript; 0 when unknown. Ranks the term in
+ * the model vocabulary.
+ */
+last_used?: number; 
+/**
+ * Learned pairs only: how many final transcripts contained `to`.
+ */
+times_used?: number }
 
 /** tauri-specta globals **/
 

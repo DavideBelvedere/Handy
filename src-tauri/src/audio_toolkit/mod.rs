@@ -13,7 +13,7 @@ pub use audio::{
 };
 pub use lang_id::detect_output_language;
 pub use text::{
-    apply_custom_words, apply_scratch_that, apply_word_replacements,
+    apply_custom_words, apply_scratch_that, apply_word_replacements, contains_term,
     normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
 };
 pub use utils::get_cpal_host;

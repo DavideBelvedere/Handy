@@ -22,6 +22,13 @@ pub fn redact_text(text: &str) -> &str {
     }
 }
 
+/// Seconds since the Unix epoch; 0 if the clock is set before it.
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 /// Main window's opening and minimum page size, in logical pixels.
 pub const MAIN_WINDOW_SIZE: (f64, f64) = (720.0, 600.0);
 
