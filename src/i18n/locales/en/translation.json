@@ -613,7 +613,7 @@
       },
       "windowContextVocabulary": {
         "title": "Use names on screen",
-        "description": "When a dictation starts, reads the text around the cursor in the field you're typing into and gives the names and technical terms it finds to the model, so they're spelled right the first time. The text stays on this computer, is used for that dictation only and is never saved. Works with models that support custom words. macOS only; never reads password fields."
+        "description": "When a dictation starts, reads the text around the cursor in the field you're typing into and gives the names and technical terms it finds to the model, so they're spelled right the first time. The text stays on this computer, is used for that dictation only and is never saved. Only helps models that accept a vocabulary, such as Whisper. macOS only; never reads password fields."
       },
       "voiceActivityDetection": {
         "title": "Voice Activity Detection",

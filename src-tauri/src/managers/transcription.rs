@@ -972,10 +972,15 @@ impl TranscriptionManager {
     }
 
     /// Starts reading the on-screen terms of the dictation starting now, when
-    /// enabled, replacing the previous dictation's. Returns at once.
+    /// enabled and the model (if already loaded) takes vocabulary, replacing
+    /// the previous dictation's. Returns at once.
     // shortcut: one slot, so a dictation started while the previous one still decodes in batch hands it the newer context; key the slot by recording session if that matters.
     pub fn capture_window_context(&self, settings: &AppSettings) {
-        let capture = settings.window_context_vocabulary.then(|| {
+        let takes_vocabulary = self
+            .engine
+            .loaded()
+            .is_none_or(|info| info.supports_vocabulary);
+        let capture = (settings.window_context_vocabulary && takes_vocabulary).then(|| {
             let known = settings
                 .custom_words
                 .iter()

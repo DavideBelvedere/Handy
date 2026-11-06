@@ -613,7 +613,7 @@
       },
       "windowContextVocabulary": {
         "title": "Usa i nomi sullo schermo",
-        "description": "All'avvio di una dettatura legge il testo intorno al cursore nel campo in cui stai scrivendo e passa al modello i nomi e i termini tecnici che trova, così vengono scritti giusti al primo colpo. Il testo resta su questo computer, serve solo per quella dettatura e non viene mai salvato. Funziona con i modelli che supportano le parole personalizzate. Solo macOS; non legge mai i campi password."
+        "description": "All'avvio di una dettatura legge il testo intorno al cursore nel campo in cui stai scrivendo e passa al modello i nomi e i termini tecnici che trova, così vengono scritti giusti al primo colpo. Il testo resta su questo computer, serve solo per quella dettatura e non viene mai salvato. Aiuta solo i modelli che accettano un vocabolario, come Whisper. Solo macOS; non legge mai i campi password."
       },
       "voiceActivityDetection": {
         "title": "Rilevamento dell'attività vocale",
