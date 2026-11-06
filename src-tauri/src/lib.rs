@@ -624,8 +624,9 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
                     std::thread::sleep(std::time::Duration::from_millis(30));
                 }
             }
-            match tm.finalize_stream() {
-                Ok(Some(out)) => {
+            // Falls back to a batch run when the stream produced no result.
+            match tm.transcribe_recording(samples.clone()).map(|t| t.text) {
+                Ok(out) => {
                     if let Some(typer) = &typer {
                         let finish = typer.finish(out.clone());
                         eprintln!("live typing: {finish:?}");
@@ -640,7 +641,6 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
                     }
                     Ok(out)
                 }
-                Ok(None) => Err(anyhow::anyhow!("model did not produce a stream result")),
                 Err(e) => Err(e),
             }
         } else {

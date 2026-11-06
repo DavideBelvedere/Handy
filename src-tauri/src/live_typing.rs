@@ -288,7 +288,7 @@ fn finish_like_paste(app: &AppHandle, settings: &AppSettings, text: String) {
         thread::sleep(Duration::from_millis(50));
         let key = settings.auto_submit_key;
         if let Err(e) = on_main(app, move |app| {
-            with_enigo(app, |enigo| send_return_key(enigo, key))
+            with_enigo(app, move |enigo| send_return_key(enigo, key))
         }) {
             warn!("Live typing: auto-submit failed: {e}");
         }
@@ -404,7 +404,7 @@ fn type_on_main(app: &AppHandle, backspaces: usize, text: &str) -> Result<(), St
     }
     let text = text.to_string();
     on_main(app, move |app| {
-        with_enigo(app, |enigo| {
+        with_enigo(app, move |enigo| {
             for _ in 0..backspaces {
                 enigo
                     .key(Key::Backspace, Direction::Click)

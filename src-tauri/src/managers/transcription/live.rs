@@ -57,7 +57,8 @@ impl<'a> LiveSession<'a> {
                 // A stream's language is fixed before any audio, so it can't
                 // be detected; a detect plan falls back.
                 let setup = tm.setup_for(info, &settings, &plan, &[]);
-                let stream = StreamSession::begin(tm, info, &settings, &setup, model_id, live_typer)?;
+                let stream =
+                    StreamSession::begin(tm, info, &settings, &setup, model_id, live_typer)?;
                 LiveDecoder::Stream(stream, Box::new(setup))
             }
             LiveDecode::Chunked => {
