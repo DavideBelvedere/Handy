@@ -1620,7 +1620,17 @@ export type WordReplacement = { from: string; to: string;
  * True when auto-learn added this pair, false for manual UI entries.
  * Defaulted so replacements stored before this field existed still load.
  */
-learned?: boolean }
+learned?: boolean; 
+/**
+ * Learned pairs only: Unix seconds when this pair was learned or its `to`
+ * last appeared in a final transcript; 0 when unknown. Ranks the term in
+ * the model vocabulary.
+ */
+last_used?: number; 
+/**
+ * Learned pairs only: how many final transcripts contained `to`.
+ */
+times_used?: number }
 
 /** tauri-specta globals **/
 

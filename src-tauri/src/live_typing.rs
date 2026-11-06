@@ -208,7 +208,7 @@ fn type_committed(
     language: &OutputLanguageEvidence,
     languages: &[String],
 ) {
-    let cleaned = post_process_transcription_text(raw, &s.settings, false, language, languages);
+    let cleaned = post_process_transcription_text(raw, &s.settings, &[], language, languages);
     let delta = match next_delta(&s.typed, stable_prefix(&cleaned, HOLDBACK_WORDS)) {
         Delta::Nothing => return,
         Delta::Diverged => {

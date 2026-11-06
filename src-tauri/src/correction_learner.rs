@@ -152,6 +152,7 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
     match list.iter_mut().find(|r| r.from.to_lowercase() == key) {
         Some(r) if r.learned && r.to != to => {
             r.to = to.to_string();
+            r.last_used = crate::utils::unix_now();
             true
         }
         Some(_) => false,
@@ -160,6 +161,8 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
                 from: from.to_string(),
                 to: to.to_string(),
                 learned: true,
+                last_used: crate::utils::unix_now(),
+                ..Default::default()
             });
             true
         }
@@ -596,6 +599,7 @@ mod tests {
             from: "Gpt".into(),
             to: "GPT".into(),
             learned: false,
+            ..Default::default()
         }];
         assert!(upsert_learned(&mut list, "andy", "Handy"));
         assert_eq!(list.len(), 2);

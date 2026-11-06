@@ -109,7 +109,7 @@ pub enum PostProcessApiFormat {
 /// A deterministic find-and-replace rule applied to the final transcript:
 /// an exact, case-insensitive substitution of `from` with `to`, unlike the
 /// fuzzy `custom_words`.
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, Type)]
 pub struct WordReplacement {
     pub from: String,
     pub to: String,
@@ -117,6 +117,14 @@ pub struct WordReplacement {
     /// Defaulted so replacements stored before this field existed still load.
     #[serde(default)]
     pub learned: bool,
+    /// Learned pairs only: Unix seconds when this pair was learned or its `to`
+    /// last appeared in a final transcript; 0 when unknown. Ranks the term in
+    /// the model vocabulary.
+    #[serde(default)]
+    pub last_used: u64,
+    /// Learned pairs only: how many final transcripts contained `to`.
+    #[serde(default)]
+    pub times_used: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
@@ -1575,6 +1583,7 @@ mod tests {
             from: from.into(),
             to: to.into(),
             learned: true,
+            ..Default::default()
         })
         .to_vec();
 
@@ -1605,6 +1614,7 @@ mod tests {
                 from: from.into(),
                 to: to.into(),
                 learned: true,
+                ..Default::default()
             }),
         );
         assert_eq!(

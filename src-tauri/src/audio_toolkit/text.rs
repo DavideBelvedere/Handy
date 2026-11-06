@@ -306,6 +306,28 @@ fn extract_punctuation(word: &str) -> (&str, &str) {
     (prefix, suffix)
 }
 
+/// Case-insensitive regex for `term` as a whole word. Word boundaries are
+/// added only when the edge characters are word characters. This keeps an
+/// alphanumeric term from matching inside a larger word (so "cortex" does not
+/// match within "cortexes"), while still allowing terms with symbol edges like
+/// "C++" or ".NET" to match.
+fn term_pattern(term: &str) -> String {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    format!(
+        "(?i){}{}{}",
+        if term.starts_with(is_word) { r"\b" } else { "" },
+        regex::escape(term),
+        if term.ends_with(is_word) { r"\b" } else { "" },
+    )
+}
+
+/// Whether `term` appears in `text` as a whole word, ignoring case, by the
+/// same rule [`apply_word_replacements`] matches with.
+pub fn contains_term(text: &str, term: &str) -> bool {
+    let term = term.trim();
+    !term.is_empty() && Regex::new(&term_pattern(term)).is_ok_and(|re| re.is_match(text))
+}
+
 /// Applies deterministic find-and-replace rules to transcribed text.
 ///
 /// Each rule replaces every whole-word, case-insensitive occurrence of `from`
@@ -326,27 +348,7 @@ pub fn apply_word_replacements(text: &str, replacements: &[WordReplacement]) -> 
             continue;
         }
 
-        // Add word boundaries only when the edge characters are word
-        // characters. This keeps an alphanumeric term from matching inside a
-        // larger word (so "cortex" does not match within "cortexes"), while
-        // still allowing terms with symbol edges like "C++" or ".NET" to match.
-        let escaped = regex::escape(from);
-        let starts_word = from
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let ends_word = from
-            .chars()
-            .last()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let pattern = format!(
-            "(?i){}{}{}",
-            if starts_word { r"\b" } else { "" },
-            escaped,
-            if ends_word { r"\b" } else { "" },
-        );
-
-        if let Ok(re) = Regex::new(&pattern) {
+        if let Ok(re) = Regex::new(&term_pattern(from)) {
             // NoExpand treats `to` literally so characters like `$` are not
             // interpreted as capture-group references.
             if let Cow::Owned(replaced) =
@@ -1191,6 +1193,7 @@ mod tests {
             from: from.to_string(),
             to: to.to_string(),
             learned: false,
+            ..Default::default()
         }
     }
 
