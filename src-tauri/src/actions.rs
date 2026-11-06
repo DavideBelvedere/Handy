@@ -532,6 +532,8 @@ impl ShortcutAction for TranscribeAction {
         // Get the microphone mode to determine audio feedback timing
         let plan_started = Instant::now();
         let settings = get_settings(app);
+        // Its own thread, before the stream starts so the stream can use it.
+        tm.capture_window_context(&settings);
         let is_always_on = settings.always_on_microphone;
 
         let selected_model_info = app

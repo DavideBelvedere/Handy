@@ -17,6 +17,7 @@ use crate::audio_toolkit::OutputLanguageEvidence;
 use crate::engine_supervisor::{EngineError, LoadedInfo, StreamHandle, StreamProgress};
 use crate::live_typing::LiveTyper;
 use crate::settings::{get_settings, AppSettings};
+use crate::window_context::WindowContext;
 
 /// One recording's live decode.
 pub(super) struct LiveSession<'a> {
@@ -43,10 +44,14 @@ impl<'a> LiveSession<'a> {
         info: &LoadedInfo,
         model_id: &str,
         live_typer: Option<(LiveTyper, u64)>,
+        window_context: Option<&WindowContext>,
     ) -> Option<Self> {
         if mode == LiveDecode::None {
             return None;
         }
+        // Run options are fixed when a stream begins, so the context reaches
+        // this stream (and a batch fallback) only if read within its budget.
+        let context_terms = window_context.map(WindowContext::terms).unwrap_or_default();
         // The same run setup as the batch path: task + language gated
         // against what the model actually advertises.
         let settings = get_settings(&tm.app_handle);
@@ -56,7 +61,7 @@ impl<'a> LiveSession<'a> {
             LiveDecode::Stream => {
                 // A stream's language is fixed before any audio, so it can't
                 // be detected; a detect plan falls back.
-                let setup = tm.setup_for(info, &settings, &plan, &[]);
+                let setup = tm.setup_for(info, &settings, &plan, &[], &context_terms);
                 let stream =
                     StreamSession::begin(tm, info, &settings, &setup, model_id, live_typer)?;
                 LiveDecoder::Stream(stream, Box::new(setup))
@@ -71,6 +76,7 @@ impl<'a> LiveSession<'a> {
                         plan,
                         info: info.clone(),
                         settings,
+                        context_terms,
                     })),
                     model_id,
                     backend,

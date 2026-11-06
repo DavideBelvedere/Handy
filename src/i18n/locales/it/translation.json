@@ -611,6 +611,10 @@
         "title": "Filter learned words with AI",
         "description": "Before saving a learned pair, asks your post-processing provider whether the corrected word is real vocabulary (a name, brand, acronym or technical term). Only the corrected words are sent, never the rest of the text. If the provider fails or doesn't answer, nothing is learned."
       },
+      "windowContextVocabulary": {
+        "title": "Usa i nomi sullo schermo",
+        "description": "All'avvio di una dettatura legge il testo intorno al cursore nel campo in cui stai scrivendo e passa al modello i nomi e i termini tecnici che trova, così vengono scritti giusti al primo colpo. Il testo resta su questo computer, serve solo per quella dettatura e non viene mai salvato. Funziona con i modelli che supportano le parole personalizzate. Solo macOS; non legge mai i campi password."
+      },
       "voiceActivityDetection": {
         "title": "Rilevamento dell'attività vocale",
         "description": "Filtra il silenzio dalle registrazioni. I modelli che supportano lo streaming utilizzano una coda VAD più lunga; disabilitando la VAD si registra l'audio grezzo."

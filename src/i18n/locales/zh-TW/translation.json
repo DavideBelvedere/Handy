@@ -611,6 +611,10 @@
         "title": "Filter learned words with AI",
         "description": "Before saving a learned pair, asks your post-processing provider whether the corrected word is real vocabulary (a name, brand, acronym or technical term). Only the corrected words are sent, never the rest of the text. If the provider fails or doesn't answer, nothing is learned."
       },
+      "windowContextVocabulary": {
+        "title": "Use names on screen",
+        "description": "When a dictation starts, reads the text around the cursor in the field you're typing into and gives the names and technical terms it finds to the model, so they're spelled right the first time. The text stays on this computer, is used for that dictation only and is never saved. Works with models that support custom words. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "語音活動偵測",
         "description": "過濾錄音中的靜音。支援串流的模型會使用較長的 VAD 尾段；停用 VAD 則會錄製原始音訊"

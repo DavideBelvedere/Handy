@@ -208,6 +208,8 @@ const settingUpdaters: {
     commands.changeScratchThatEnabledSetting(value as boolean),
   auto_learn_enabled: (value) =>
     commands.changeAutoLearnEnabledSetting(value as boolean),
+  window_context_vocabulary: (value) =>
+    commands.changeWindowContextVocabularySetting(value as boolean),
   auto_learn_llm_filter: (value) =>
     commands.changeAutoLearnLlmFilterSetting(value as boolean),
   live_typing_enabled: (value) =>

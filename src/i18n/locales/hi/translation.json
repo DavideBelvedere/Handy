@@ -611,6 +611,10 @@
         "title": "Filter learned words with AI",
         "description": "Before saving a learned pair, asks your post-processing provider whether the corrected word is real vocabulary (a name, brand, acronym or technical term). Only the corrected words are sent, never the rest of the text. If the provider fails or doesn't answer, nothing is learned."
       },
+      "windowContextVocabulary": {
+        "title": "Use names on screen",
+        "description": "When a dictation starts, reads the text around the cursor in the field you're typing into and gives the names and technical terms it finds to the model, so they're spelled right the first time. The text stays on this computer, is used for that dictation only and is never saved. Works with models that support custom words. macOS only; never reads password fields."
+      },
       "voiceActivityDetection": {
         "title": "वॉइस एक्टिविटी डिटेक्शन",
         "description": "रिकॉर्डिंग से बिना आवाज़ वाले हिस्से हटाएं. स्ट्रीमिंग वाले मॉडल लंबी VAD टेल इस्तेमाल करते हैं; VAD बंद करने पर कच्चा ऑडियो रिकॉर्ड होता है."
