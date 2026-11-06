@@ -190,6 +190,7 @@ impl<'a> StreamSession<'a> {
                         typer.on_committed(
                             *generation,
                             &text.committed,
+                            &text.tentative,
                             &live_language,
                             &languages,
                         );

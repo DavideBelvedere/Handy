@@ -8,6 +8,10 @@
 //! is sealed (never touched again) and the next words start a new one at the
 //! cursor. Only the last segment, if unedited, gets the final replace.
 //!
+//! When the speaker pauses, the held-back words and the model's tentative ones
+//! are typed too, as the segment's tail; until they become stable they may be
+//! revised, with the same verified delete.
+//!
 //! Without an Accessibility target (non-macOS, unreadable field) no session
 //! starts and the caller does the normal paste.
 
@@ -23,8 +27,8 @@ use log::{debug, warn};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
-use tauri::AppHandle;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Trailing words never typed live: custom-word n-grams reach 3 words, so a
@@ -36,6 +40,8 @@ const VERIFY_RETRY: Duration = Duration::from_millis(60);
 /// How long a Chrome/Electron app may take to build its AX tree after
 /// AXManualAccessibility; a native field is found on the first read.
 pub(crate) const FIELD_WAIT: Duration = Duration::from_millis(2_500);
+/// Silence after which the held-back and tentative words are typed.
+const PAUSE_FLUSH: Duration = Duration::from_millis(400);
 
 enum Cmd {
     /// `generation` 0 = not live.
@@ -45,6 +51,7 @@ enum Cmd {
     Committed {
         generation: u64,
         text: String,
+        tentative: String,
         language: OutputLanguageEvidence,
         languages: Vec<String>,
     },
@@ -109,11 +116,13 @@ impl LiveTyper {
         self.current.load(Ordering::Acquire)
     }
 
-    /// Forwards the stream's raw committed text. Never blocks the engine thread.
+    /// Forwards the stream's raw committed and tentative text. Never blocks
+    /// the engine thread.
     pub fn on_committed(
         &self,
         generation: u64,
         committed: &str,
+        tentative: &str,
         language: &OutputLanguageEvidence,
         languages: &[String],
     ) {
@@ -121,6 +130,7 @@ impl LiveTyper {
             let _ = self.tx.send(Cmd::Committed {
                 generation,
                 text: committed.to_string(),
+                tentative: tentative.to_string(),
                 language: language.clone(),
                 languages: languages.to_vec(),
             });
@@ -168,16 +178,59 @@ struct Session {
     /// A typing call failed, so the field content is unknown: never touch it again.
     poisoned: bool,
     settings: AppSettings,
+    /// The latest raw text with the model's tentative words.
+    latest: Option<Pending>,
+    /// When `latest` last changed, and whether a pause has typed it since.
+    changed_at: Instant,
+    flushed: bool,
+}
+
+#[derive(Clone)]
+struct Pending {
+    raw: String,
+    language: OutputLanguageEvidence,
+    languages: Vec<String>,
+}
+
+impl Session {
+    fn flush_due(&self) -> Option<Instant> {
+        (self.active && !self.flushed && self.latest.is_some())
+            .then(|| self.changed_at + PAUSE_FLUSH)
+    }
 }
 
 fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
     let mut session: Option<Session> = None;
-    while let Ok(cmd) = rx.recv() {
+    loop {
+        let was_live = session.as_ref().is_some_and(|s| s.active);
+        let due = session.as_ref().and_then(Session::flush_due);
+        let cmd = match due {
+            Some(due) => match rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
+                Ok(cmd) => Some(cmd),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            },
+            None => match rx.recv() {
+                Ok(cmd) => Some(cmd),
+                Err(_) => break,
+            },
+        };
+        let Some(cmd) = cmd else {
+            if let Some(s) = session.as_mut() {
+                flush_tail(&app, s);
+            }
+            continue;
+        };
         match cmd {
-            Cmd::Begin { generation } => session = begin_session(&app, generation),
+            Cmd::Begin { generation } => {
+                session = begin_session(&app, generation);
+                show_live_in_overlay(&app, session.is_some());
+                continue;
+            }
             Cmd::Committed {
                 generation,
                 text,
+                tentative,
                 language,
                 languages,
             } => {
@@ -186,6 +239,20 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
                     .as_mut()
                     .filter(|s| s.active && s.generation == generation)
                 {
+                    let raw = if tentative.trim().is_empty() {
+                        text.clone()
+                    } else {
+                        format!("{} {}", text.trim_end(), tentative.trim_start())
+                    };
+                    if s.latest.as_ref().map(|p| &p.raw) != Some(&raw) {
+                        s.changed_at = Instant::now();
+                        s.flushed = false;
+                        s.latest = Some(Pending {
+                            raw,
+                            language: language.clone(),
+                            languages: languages.clone(),
+                        });
+                    }
                     type_committed(&app, s, text, &language, &languages);
                 }
             }
@@ -205,6 +272,27 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
                 }
             }
         }
+        if was_live && !session.as_ref().is_some_and(|s| s.active) {
+            show_live_in_overlay(&app, false);
+        }
+    }
+}
+
+/// Tells the overlay whether the text is appearing in the field, where it
+/// then shows no transcript of its own.
+fn show_live_in_overlay(app: &AppHandle, live: bool) {
+    let _ = app.emit_to("recording_overlay", "live-typing", live);
+}
+
+/// After a pause, types what is still held back (the stable prefix's last
+/// words and the model's tentative ones) as the segment's revisable tail.
+fn flush_tail(app: &AppHandle, s: &mut Session) {
+    s.flushed = true;
+    let Some(p) = s.latest.clone() else { return };
+    let cleaned =
+        post_process_transcription_text(p.raw, &s.settings, &[], &p.language, &p.languages);
+    if let Some(edit) = segment_delta(s, &cleaned, true) {
+        apply_edit(app, s, edit, true);
     }
 }
 
@@ -244,6 +332,9 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
         active: true,
         poisoned: false,
         settings,
+        latest: None,
+        changed_at: Instant::now(),
+        flushed: false,
     })
 }
 
@@ -255,11 +346,23 @@ fn type_committed(
     languages: &[String],
 ) {
     let cleaned = post_process_transcription_text(raw, &s.settings, &[], language, languages);
-    let delta = segment_delta(s, &cleaned);
+    let edit = segment_delta(s, &cleaned, false);
     s.segment.seen_words = word_count(&cleaned);
-    let Some(delta) = delta else { return };
-    match type_on_main(app, 0, &delta) {
-        Ok(()) => s.segment.typed.push_str(&delta),
+    if let Some(edit) = edit {
+        apply_edit(app, s, edit, false);
+    }
+}
+
+fn apply_edit(app: &AppHandle, s: &mut Session, edit: Delta, flush: bool) {
+    let (backspaces, insert) = match &edit {
+        Delta::Append(insert) => (0, insert.as_str()),
+        Delta::Revise {
+            backspaces, insert, ..
+        } => (*backspaces, insert.as_str()),
+        Delta::Nothing | Delta::Diverged => return,
+    };
+    match type_on_main(app, backspaces, insert) {
+        Ok(()) => s.segment.apply(edit, flush),
         Err(e) => {
             warn!("Live typing: typing failed ({e}); stopping");
             s.active = false;
@@ -268,10 +371,11 @@ fn type_committed(
     }
 }
 
-/// What to type for `cleaned` at the cursor, after checking the field: a
-/// user edit or cursor move seals the segment first.
-fn segment_delta(s: &mut Session, cleaned: &str) -> Option<String> {
-    let delta = match s.segment.delta(cleaned) {
+/// The edit to make for `cleaned` at the cursor (its stable prefix, or all
+/// of it when `flush`), after checking the field: a user edit or cursor move
+/// seals the segment first.
+fn segment_delta(s: &mut Session, cleaned: &str, flush: bool) -> Option<Delta> {
+    let edit = match s.segment.plan(cleaned, flush) {
         Delta::Nothing => return None,
         Delta::Diverged => {
             debug!(
@@ -281,10 +385,19 @@ fn segment_delta(s: &mut Session, cleaned: &str) -> Option<String> {
             s.active = false;
             return None;
         }
-        Delta::Append(delta) => delta,
+        edit => edit,
     };
     match verify_field(&s.target, &s.segment.typed) {
-        FieldCheck::Verified | FieldCheck::Unreadable => Some(delta),
+        FieldCheck::Verified => Some(edit),
+        // Appending deletes nothing, so an unreadable field only needs focus;
+        // but a flushed tail could never be revised there.
+        FieldCheck::Unreadable if !flush && matches!(edit, Delta::Append(_)) => Some(edit),
+        FieldCheck::Unreadable if flush => None,
+        FieldCheck::Unreadable => {
+            debug!("Live typing: can't revise the tail of an unreadable field; stopping");
+            s.active = false;
+            None
+        }
         FieldCheck::Moved => {
             debug!("Live typing: focus moved; stopping");
             s.active = false;
@@ -299,8 +412,8 @@ fn segment_delta(s: &mut Session, cleaned: &str) -> Option<String> {
                 "Live typing: field edited; new segment at the cursor from word {} ({dropped} pending words dropped)",
                 s.segment.start_words
             );
-            match s.segment.delta(cleaned) {
-                Delta::Append(delta) => Some(delta),
+            match s.segment.plan(cleaned, flush) {
+                edit @ Delta::Append(_) => Some(edit),
                 _ => None,
             }
         }
@@ -556,6 +669,13 @@ fn stable_prefix(cleaned: &str, holdback_words: usize) -> &str {
 #[derive(Debug, PartialEq, Eq)]
 enum Delta {
     Append(String),
+    /// Delete the segment's tail after its first `keep` bytes
+    /// (`backspaces` of it), then type `insert`.
+    Revise {
+        keep: usize,
+        backspaces: usize,
+        insert: String,
+    },
     Diverged,
     Nothing,
 }
@@ -634,19 +754,64 @@ struct Segment {
     lead: &'static str,
     /// What this segment typed, `lead` included.
     typed: String,
+    /// Bytes at the end of `typed` typed after a pause, before they were
+    /// stable: the only typed text that may still be revised.
+    tail: usize,
     /// Words in the cleaned text at the last commit.
     seen_words: usize,
 }
 
 impl Segment {
-    /// Delta to type for `cleaned`, whose last [`HOLDBACK_WORDS`] words are a
-    /// tentative tail that is never typed, so revising it deletes nothing.
+    #[cfg(test)]
     fn delta(&self, cleaned: &str) -> Delta {
-        let stable = stable_prefix(cleaned, HOLDBACK_WORDS);
-        next_delta(
-            &self.typed,
-            &self.with_lead(skip_words(stable, self.start_words)),
-        )
+        self.plan(cleaned, false)
+    }
+
+    /// The edit that brings the segment to `cleaned`'s stable prefix (minus
+    /// its last [`HOLDBACK_WORDS`] words), or to all of `cleaned` when
+    /// `flush`. Only the tail may be deleted.
+    fn plan(&self, cleaned: &str, flush: bool) -> Delta {
+        let target = if flush {
+            cleaned.trim_end()
+        } else {
+            stable_prefix(cleaned, HOLDBACK_WORDS)
+        };
+        let wanted = self.with_lead(skip_words(target, self.start_words));
+        match next_delta(&self.typed, &wanted) {
+            Delta::Diverged if self.tail > 0 => {
+                let fixed = self.typed.len() - self.tail;
+                let keep = match plan_finish(&self.typed, &wanted) {
+                    FinishPlan::Replace { keep } => keep,
+                    FinishPlan::TypeRest(_) => self.typed.len(),
+                };
+                match backspace_count(&self.typed[keep..]) {
+                    Some(backspaces) if keep >= fixed => Delta::Revise {
+                        keep,
+                        backspaces,
+                        insert: wanted[keep..].to_string(),
+                    },
+                    _ => Delta::Diverged,
+                }
+            }
+            delta => delta,
+        }
+    }
+
+    /// Records a typed edit. Text typed on a flush is tail; a commit's edit
+    /// reaches its stable prefix, so nothing typed is tentative any more.
+    fn apply(&mut self, edit: Delta, flush: bool) {
+        let insert = match edit {
+            Delta::Append(insert) => insert,
+            Delta::Revise { keep, insert, .. } => {
+                let fixed = self.typed.len() - self.tail;
+                self.typed.truncate(keep);
+                self.tail = keep - fixed;
+                insert
+            }
+            Delta::Nothing | Delta::Diverged => return,
+        };
+        self.typed.push_str(&insert);
+        self.tail = if flush { self.tail + insert.len() } else { 0 };
     }
 
     fn with_lead(&self, text: &str) -> String {
@@ -668,6 +833,7 @@ impl Segment {
             start_words: next,
             lead,
             typed: String::new(),
+            tail: 0,
             seen_words: self.seen_words,
         };
         next - typed_end
@@ -934,7 +1100,7 @@ mod tests {
             last: Arc::new(AtomicU64::new(0)),
         };
         let committed = |generation| {
-            typer.on_committed(generation, "hi", &OutputLanguageEvidence::Unknown, &[]);
+            typer.on_committed(generation, "hi", "", &OutputLanguageEvidence::Unknown, &[]);
             rx.try_iter()
                 .filter(|c| matches!(c, Cmd::Committed { .. }))
                 .count()
@@ -979,9 +1145,8 @@ mod tests {
     /// A segment fed the cleaned commits in `commits`, typing every delta.
     fn typed_through(seg: &mut Segment, commits: &[&str]) {
         for cleaned in commits {
-            if let Delta::Append(delta) = seg.delta(cleaned) {
-                seg.typed.push_str(&delta);
-            }
+            let delta = seg.delta(cleaned);
+            seg.apply(delta, false);
             seg.seen_words = word_count(cleaned);
         }
     }
@@ -1156,5 +1321,57 @@ mod tests {
             plan_segment_finish(FieldCheck::Verified, "ok 👍🏽", "Ok.", String::new()),
             FinishStep::Copy
         );
+    }
+
+    #[test]
+    fn pause_types_the_held_back_words_as_a_revisable_tail() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["send it to Bob on Thursday"]);
+        assert_eq!(seg.typed, "send it to");
+        // A pause types the held-back words (and tentative ones) as tail.
+        let flush = seg.plan("send it to Bob on Thursday at", true);
+        assert_eq!(flush, Delta::Append(" Bob on Thursday at".into()));
+        seg.apply(flush, true);
+        assert_eq!(seg.typed, "send it to Bob on Thursday at");
+        assert_eq!(seg.tail, " Bob on Thursday at".len());
+
+        // Until the stable prefix reaches a revised word, nothing changes.
+        assert_eq!(
+            seg.plan("send it to Bob on Friday at noon", false),
+            Delta::Nothing
+        );
+        // Then only the revised part of the tail is deleted.
+        let revise = seg.plan("send it to Bob on Friday at noon today ok", false);
+        assert_eq!(
+            revise,
+            Delta::Revise {
+                keep: "send it to Bob on ".len(),
+                backspaces: "Thursday at".len(),
+                insert: "Friday at".into()
+            }
+        );
+        seg.apply(revise, false);
+        assert_eq!(seg.typed, "send it to Bob on Friday at");
+        assert_eq!(seg.tail, 0, "a commit's text is stable");
+        // Unchanged words just continue.
+        assert_eq!(
+            seg.plan("send it to Bob on Friday at noon today ok go", false),
+            Delta::Append(" noon".into())
+        );
+    }
+
+    #[test]
+    fn text_typed_before_the_tail_is_never_revised() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["send it to Bob on Thursday"]);
+        let flush = seg.plan("send it to Bob on Thursday", true);
+        seg.apply(flush, true);
+        // "to" was typed from the stable prefix: a change there is a divergence.
+        assert_eq!(
+            seg.plan("send it for Bob on Thursday at noon", false),
+            Delta::Diverged
+        );
+        // A flush with fewer words deletes nothing.
+        assert_eq!(seg.plan("send it to Bob", true), Delta::Nothing);
     }
 }
