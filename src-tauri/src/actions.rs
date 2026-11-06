@@ -12,7 +12,7 @@ use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::{Transcription, TranscriptionManager};
 use crate::notices::{self, Notice, NoticeCode, NoticeSource};
 use crate::settings::{
-    get_settings, AppSettings, OverlayStyle, PasteMethod, ShortcutActivation,
+    get_settings, AppSettings, OverlayStyle, PasteMethod, PostProcessProvider, ShortcutActivation,
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::shortcut;
@@ -126,13 +126,45 @@ fn strip_invisible_chars(s: &str) -> String {
 /// reasoning, and some local servers put the reasoning text into `content`
 /// instead of a separate field — without this the user would get the model's
 /// chain of thought pasted along with the cleaned transcription.
-fn strip_think_block(s: &str) -> &str {
+pub(crate) fn strip_think_block(s: &str) -> &str {
     if let Some(rest) = s.trim_start().strip_prefix("<think>") {
         if let Some(end) = rest.find("</think>") {
             return rest[end + "</think>".len()..].trim_start();
         }
     }
     s
+}
+
+/// The selected post-processing provider with its model and API key, or
+/// `None` when no provider is selected or it has no model configured.
+pub(crate) fn post_process_llm(
+    settings: &AppSettings,
+) -> Option<(PostProcessProvider, String, String)> {
+    let Some(provider) = settings.active_post_process_provider().cloned() else {
+        debug!("No post-processing provider is selected");
+        return None;
+    };
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    if model.trim().is_empty() {
+        debug!("Provider '{}' has no model configured", provider.id);
+        return None;
+    }
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    Some((provider, model, api_key))
+}
+
+/// Ask these providers to skip reasoning/thinking: it rarely helps a short
+/// rewrite or classification and adds seconds of latency.
+pub(crate) fn disables_reasoning(provider: &PostProcessProvider) -> bool {
+    matches!(provider.id.as_str(), "custom" | "openrouter")
 }
 
 /// Build a system prompt from the user's prompt template.
@@ -205,27 +237,9 @@ async fn post_process_transcription(
         return PostProcessOutcome::Skipped;
     }
 
-    let provider = match settings.active_post_process_provider().cloned() {
-        Some(provider) => provider,
-        None => {
-            debug!("Post-processing enabled but no provider is selected");
-            return PostProcessOutcome::Failed;
-        }
-    };
-
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    if model.trim().is_empty() {
-        debug!(
-            "Post-processing skipped because provider '{}' has no model configured",
-            provider.id
-        );
+    let Some((provider, model, api_key)) = post_process_llm(settings) else {
         return PostProcessOutcome::Failed;
-    }
+    };
 
     let selected_prompt_id = match &settings.post_process_selected_prompt_id {
         Some(id) => id.clone(),
@@ -260,16 +274,9 @@ async fn post_process_transcription(
         provider.id, model
     );
 
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    // Ask these providers to skip reasoning/thinking — post-processing rarely
-    // benefits from it and it adds seconds of latency. llm_client picks the
-    // field the endpoint understands and retries without it if rejected.
-    let disable_reasoning = matches!(provider.id.as_str(), "custom" | "openrouter");
+    // llm_client picks the field the endpoint understands and retries without
+    // it if rejected.
+    let disable_reasoning = disables_reasoning(&provider);
 
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);

@@ -777,6 +777,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_scratch_that_enabled_setting,
             shortcut::change_auto_learn_enabled_setting,
+            shortcut::change_auto_learn_llm_filter_setting,
             shortcut::change_live_typing_enabled_setting,
             shortcut::change_chinese_script_setting,
             shortcut::change_app_language_setting,

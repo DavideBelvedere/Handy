@@ -447,6 +447,14 @@ async changeAutoLearnEnabledSetting(enabled: boolean) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeAutoLearnLlmFilterSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_learn_llm_filter_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeLiveTypingEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_live_typing_enabled_setting", { enabled }) };
@@ -1188,6 +1196,11 @@ reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: strin
  * Learn word replacements from corrections made in the target app.
  */
 auto_learn_enabled?: boolean; 
+/**
+ * Ask the post-processing LLM to accept only real vocabulary before
+ * auto-learn saves a correction.
+ */
+auto_learn_llm_filter?: boolean; 
 /**
  * Type streamed dictation into the focused field while speaking.
  */

@@ -552,6 +552,10 @@ pub struct AppSettings {
     /// Learn word replacements from corrections made in the target app.
     #[serde(default)]
     pub auto_learn_enabled: bool,
+    /// Ask the post-processing LLM to accept only real vocabulary before
+    /// auto-learn saves a correction.
+    #[serde(default)]
+    pub auto_learn_llm_filter: bool,
     /// Type streamed dictation into the focused field while speaking.
     #[serde(default)]
     pub live_typing_enabled: bool,
@@ -1111,6 +1115,7 @@ pub fn get_default_settings() -> AppSettings {
         custom_filler_words: None,
         scratch_that_enabled: default_scratch_that_enabled(),
         auto_learn_enabled: false,
+        auto_learn_llm_filter: false,
         live_typing_enabled: false,
         chinese_script: default_chinese_script(),
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),

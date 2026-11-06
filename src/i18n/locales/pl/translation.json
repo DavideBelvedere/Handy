@@ -607,6 +607,10 @@
         "title": "Auto-learn corrections",
         "description": "For about 60 seconds after a dictation, watches the field you typed into and learns exact word pairs from words you fix by hand. Learned pairs appear in Word Replacements. macOS only; never reads password fields."
       },
+      "autoLearnLlmFilter": {
+        "title": "Filter learned words with AI",
+        "description": "Before saving a learned pair, asks your post-processing provider whether the corrected word is real vocabulary (a name, brand, acronym or technical term). Only the corrected words are sent, never the rest of the text. If the provider fails or doesn't answer, nothing is learned."
+      },
       "voiceActivityDetection": {
         "title": "Wykrywanie aktywności głosowej",
         "description": "Odfiltrowuje ciszę z nagrań. Modele obsługujące streaming używają dłuższego marginesu VAD; wyłączenie VAD nagrywa surowy dźwięk."
