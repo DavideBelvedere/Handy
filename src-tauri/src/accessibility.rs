@@ -417,9 +417,10 @@ pub async fn probe_focused_field(delay_ms: u32) -> Result<FocusProbe, String> {
     tauri::async_runtime::spawn_blocking(move || {
         std::thread::sleep(Duration::from_millis(delay_ms.into()));
         enable_manual_accessibility_for_focused_app();
-        let (field, waited) = wait_for_focused_field(crate::live_typing::FIELD_WAIT, |f| {
-            crate::live_typing::is_text_target(f.role().as_deref())
-        });
+        let (field, waited) = wait_for_focused_field(
+            crate::live_typing::FIELD_WAIT,
+            crate::live_typing::field_settled,
+        );
         info!("AX probe: waited {waited:?} for the focused element");
         let field = field.ok_or("No focused element readable via Accessibility")?;
         let probe = FocusProbe {

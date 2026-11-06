@@ -216,10 +216,7 @@ fn begin_session(app: &AppHandle, generation: u64) -> Option<Session> {
     if generation == 0 {
         return None;
     }
-    // A secure field ends the wait too: it never becomes a target.
-    let (field, waited) = accessibility::wait_for_focused_field(FIELD_WAIT, |f| {
-        f.is_secure() || is_text_target(f.role().as_deref())
-    });
+    let (field, waited) = accessibility::wait_for_focused_field(FIELD_WAIT, field_settled);
     let target = match field {
         None => {
             debug!("Live typing: no focused element after {waited:?}; using normal paste");
@@ -576,11 +573,22 @@ fn next_delta(typed: &str, stable: &str) -> Delta {
 /// Text roles only: keystrokes on other elements (a web page, a Finder list)
 /// fire single-key shortcuts. A selection range is no proof, since a focused
 /// web page can report one with no input focused.
-pub(crate) fn is_text_target(role: Option<&str>) -> bool {
+fn is_text_target(role: Option<&str>) -> bool {
     matches!(
         role,
         Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField")
     )
+}
+
+/// The focused element is final: anything but the web area or group a
+/// Chrome/Electron app reports while its AX tree is still building. A
+/// secure field ends the wait too: it never becomes a target.
+pub(crate) fn field_settled(field: &FocusedField) -> bool {
+    field.is_secure() || !is_building_role(field.role().as_deref())
+}
+
+fn is_building_role(role: Option<&str>) -> bool {
+    matches!(role, None | Some("AXWebArea" | "AXGroup"))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -827,6 +835,16 @@ mod tests {
         // report a selection range: the role alone decides.
         for role in [Some("AXWebArea"), Some("AXList"), Some("AXGroup"), None] {
             assert!(!is_text_target(role), "{role:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_building_chromium_role_keeps_waiting() {
+        for role in [None, Some("AXWebArea"), Some("AXGroup")] {
+            assert!(is_building_role(role), "{role:?}");
+        }
+        for role in [Some("AXTextArea"), Some("AXList"), Some("AXTable")] {
+            assert!(!is_building_role(role), "{role:?}");
         }
     }
 

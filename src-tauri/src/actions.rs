@@ -822,6 +822,13 @@ impl ShortcutAction for TranscribeAction {
                                 live_typing::split_at_word(&transcription, segment_start);
                             let (sealed_text, live_text) =
                                 (sealed_text.to_string(), live_text.to_string());
+                            if segment_start > 0 {
+                                debug!(
+                                    "Live typing: {} sealed words of {}; processing the rest",
+                                    segment_start,
+                                    transcription.split_whitespace().count()
+                                );
+                            }
 
                             if post_process {
                                 if use_streaming_overlay {
@@ -905,7 +912,8 @@ impl ShortcutAction for TranscribeAction {
                                 return;
                             }
                             if let Finish::Handled(inserted) = live {
-                                let outcome = if final_text.is_empty() {
+                                // Sealed segments were typed even if the last one is empty.
+                                let outcome = if final_text.is_empty() && segment_start == 0 {
                                     empty_outcome(input_silent)
                                 } else {
                                     notices::clear(&ah, NoticeSource::Dictation);
