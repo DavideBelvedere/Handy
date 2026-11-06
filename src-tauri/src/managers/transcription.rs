@@ -1641,21 +1641,18 @@ fn vocabulary_for_model(
     }
     const DAY: u64 = 24 * 60 * 60;
     // One entry per target; several pairs can share one ("Van der Muren",
-    // "Van der Muhlen" -> "Vandermeulen") and are bumped together.
-    let mut learned: Vec<&WordReplacement> = Vec::new();
+    // "Van der Muhlen" -> "Vandermeulen") and are bumped together:
+    // (target, last used, times used).
+    let mut learned: Vec<(&str, u64, u32)> = Vec::new();
     for r in word_replacements.iter().filter(|r| r.learned) {
-        match learned
-            .iter_mut()
-            .find(|l| l.to.eq_ignore_ascii_case(&r.to))
-        {
-            Some(l) if (r.last_used, r.times_used) > (l.last_used, l.times_used) => *l = r,
-            Some(_) => {}
-            None => learned.push(r),
+        match learned.iter_mut().find(|l| l.0.eq_ignore_ascii_case(&r.to)) {
+            Some(l) => *l = (l.0, l.1.max(r.last_used), l.2.max(r.times_used)),
+            None => learned.push((&r.to, r.last_used, r.times_used)),
         }
     }
-    learned.sort_by_key(|r| {
-        let age = now.saturating_sub(r.last_used);
-        let bucket = if r.last_used == 0 {
+    learned.sort_by_key(|&(_, last_used, times_used)| {
+        let age = now.saturating_sub(last_used);
+        let bucket = if last_used == 0 {
             2
         } else if age < DAY {
             0
@@ -1664,13 +1661,14 @@ fn vocabulary_for_model(
         } else {
             2
         };
-        (bucket, std::cmp::Reverse(r.times_used))
+        (bucket, std::cmp::Reverse(times_used))
     });
 
     let mut terms: Vec<String> = Vec::new();
     for term in custom_words
         .iter()
-        .chain(learned.iter().map(|r| &r.to))
+        .map(String::as_str)
+        .chain(learned.iter().map(|l| l.0))
         .map(|t| t.trim())
     {
         // Learned terms come from field text: a control-token literal or a NUL
