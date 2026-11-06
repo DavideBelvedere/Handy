@@ -2610,6 +2610,32 @@ mod tests {
     }
 
     #[test]
+    fn learned_names_are_fuzzy_corrected_whatever_was_sent() {
+        let settings = AppSettings {
+            custom_words: vec!["Handy".to_string()],
+            word_replacements: vec![
+                learned("Van der Muren", "Vandermeulen", 0, 0),
+                learned("Van der Muhlen", "Vandermeulen", 0, 0),
+            ],
+            filler_word_removal_enabled: false,
+            ..Default::default()
+        };
+        let evidence = OutputLanguageEvidence::UserSelected("en".to_string());
+        for prompted in [vec![], vec!["Handy".to_string()]] {
+            assert_eq!(
+                post_process_transcription_text(
+                    "meet the Van der Mullen family".to_string(),
+                    &settings,
+                    &prompted,
+                    &evidence,
+                    &languages(&["en"]),
+                ),
+                "meet the Vandermeulen family"
+            );
+        }
+    }
+
+    #[test]
     fn vocabulary_is_capped_keeping_the_highest_priority_terms() {
         let custom_words: Vec<String> = (0..VOCABULARY_CAP + 10)
             .map(|i| format!("word{i}"))
