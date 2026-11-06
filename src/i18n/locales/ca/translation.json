@@ -1029,6 +1029,9 @@
   },
   "autoLearn": {
     "learned": "Learned: {{from}} → {{to}}",
-    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?"
+    "misfire": "Custom word \"{{word}}\" misfired — remove it or lower the correction threshold?",
+    "undo": "Undo",
+    "undone": "Removed: {{from}} → {{to}}",
+    "undoFailed": "Couldn't undo {{from}} → {{to}}: it was edited or already removed"
   }
 }

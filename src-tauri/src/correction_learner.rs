@@ -173,6 +173,23 @@ pub fn upsert_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> 
     }
 }
 
+/// Undoes a pair `upsert_learned` just added or updated: removes it only if it
+/// is still learned and still maps `from` (case-insensitively, like
+/// `upsert_learned`) to `to`, so a manual entry or a pair the user has edited
+/// since is never touched. Returns true if the list changed.
+///
+/// When the learn updated an older learned pair, the pair is removed rather
+/// than restored to its previous `to`. That target was itself only learned,
+/// keeping it would mean carrying it through the event and the toast for a
+/// rare case, and without the pair auto-learn simply learns again from the
+/// user's next fix.
+pub fn undo_learned(list: &mut Vec<WordReplacement>, from: &str, to: &str) -> bool {
+    let key = from.to_lowercase();
+    let len = list.len();
+    list.retain(|r| !(r.learned && r.to == to && r.from.to_lowercase() == key));
+    list.len() != len
+}
+
 /// Folds the substitutions apps apply to typed text (smart quotes, NBSP), so
 /// the inserted transcript can still be found in the field.
 pub(crate) fn fold_typography(s: &str) -> String {
@@ -775,6 +792,39 @@ mod tests {
 
         assert!(!upsert_learned(&mut list, "gpt", "G.P.T."));
         assert_eq!(list[0].to, "GPT");
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn undo_removes_only_the_pair_still_as_learned() {
+        let manual = WordReplacement {
+            from: "Gpt".into(),
+            to: "GPT".into(),
+            learned: false,
+            ..Default::default()
+        };
+        let mut list = vec![manual.clone()];
+
+        // A fresh pair goes, and a second undo finds nothing.
+        assert!(upsert_learned(&mut list, "andy", "Handy"));
+        assert!(undo_learned(&mut list, "andy", "Handy"));
+        assert!(!undo_learned(&mut list, "andy", "Handy"));
+        assert_eq!(list.len(), 1);
+
+        // A manual entry is never touched.
+        assert!(!undo_learned(&mut list, "Gpt", "GPT"));
+        assert_eq!(list[0].from, manual.from);
+
+        // `from` matches case-insensitively: an update keeps the stored casing.
+        assert!(upsert_learned(&mut list, "Andy", "Handy"));
+        assert!(upsert_learned(&mut list, "ANDY", "HANDY"));
+        assert!(undo_learned(&mut list, "andy", "HANDY"));
+        assert_eq!(list.len(), 1);
+
+        // A pair whose `to` changed since is left alone.
+        assert!(upsert_learned(&mut list, "andy", "Handy"));
+        list[1].to = "Handy Computer".into();
+        assert!(!undo_learned(&mut list, "andy", "Handy"));
         assert_eq!(list.len(), 2);
     }
 

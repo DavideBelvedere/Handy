@@ -932,6 +932,24 @@ pub fn update_word_replacements(
     Ok(())
 }
 
+/// Undoes a pair auto-learn just learned, from the toast that reported it.
+/// Returns false when the pair is gone, manual, or edited since.
+#[tauri::command]
+#[specta::specta]
+pub fn undo_learned_word(app: AppHandle, from: String, to: String) -> Result<bool, String> {
+    let mut settings = settings::get_settings(&app);
+    if !crate::correction_learner::undo_learned(&mut settings.word_replacements, &from, &to) {
+        return Ok(false);
+    }
+    settings::write_settings(&app, settings);
+    // The Word Replacements list only refreshes on this event.
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({ "setting": "word_replacements" }),
+    );
+    Ok(true)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_word_correction_threshold_setting(

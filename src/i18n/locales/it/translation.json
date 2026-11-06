@@ -1029,6 +1029,9 @@
   },
   "autoLearn": {
     "learned": "Imparato: {{from}} → {{to}}",
-    "misfire": "La parola personalizzata \"{{word}}\" ha sbagliato — rimuovila o abbassa la soglia di correzione?"
+    "misfire": "La parola personalizzata \"{{word}}\" ha sbagliato — rimuovila o abbassa la soglia di correzione?",
+    "undo": "Annulla",
+    "undone": "Rimosso: {{from}} → {{to}}",
+    "undoFailed": "Impossibile annullare {{from}} → {{to}}: è stato modificato o già rimosso"
   }
 }

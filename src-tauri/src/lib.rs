@@ -766,6 +766,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             shortcut::update_word_replacements,
+            shortcut::undo_learned_word,
             shortcut::suspend_all_bindings,
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
