@@ -26,6 +26,18 @@ Also done in the same session, working on macOS:
   the whole dictation goes to the clipboard. Only exception: if the field is exactly as live
   typing left it, the words still held back are appended (`finish_copy_only` in
   `live_typing.rs`). Auto-submit is not sent in this mode.
+- **Dictating over a selection** (commit `08e737b8`): select misheard words mid-dictation
+  and keep talking; the next words replace the selection. A selection seals the live segment
+  like an edit (`seal_on_selection` in `live_typing.rs`, checked on every commit even with
+  nothing to type, and again in `segment_start` before finish); the held-back words spoken
+  before it are dropped. A segment that typed nothing yet types straight over a selection.
+- **X after an edit deletes nothing:** cancel removes the typed text only if the user never
+  edited, selected or moved the cursor during the dictation (`segment.start_words == 0` in
+  `cancel_session`). A cursor move alone also blocks the delete, on purpose.
+- **Case after a seal:** the first word after a selection/edit is capitalized at a sentence
+  start in the field (empty, after `. ! ?` or a line break) and lowercased mid-sentence when
+  the capital only came from the model's sentence break (the pause to select). Custom words,
+  English "I", "CI", "GitHub" keep their capital (`field_case`, `Segment::match_case`).
 - **Stable macOS signing:** `scripts/install-macos.sh` signs with the "Handy Local"
   self-signed certificate when present, so the Accessibility grant survives rebuilds.
 
@@ -65,11 +77,16 @@ Gmail compose), Word, and an Electron app (VS Code or Slack):
    fields; subrole is the UIA framework id ("Win32", "Chrome", "XAML"...).
 2. **Live typing**: text appears while speaking; edit mid-dictation, it must continue at the
    cursor; stop, the field must not be rewritten and the clipboard must hold the full text.
-3. **Auto-learn**: after a dictation fix a word by hand; within ~60 s a toast offers the pair.
-4. **Names around the cursor** (Advanced, `window_context_vocabulary`): a name visible in the
+3. **Selection and cancel**: (a) mid-dictation select a wrong word and keep talking: the new
+   words replace it, lowercase mid-sentence, capitalized after a period or in an empty field;
+   (b) dictate, fix a word by hand, press X: nothing is deleted (log: `the field was edited,
+   left the typed text in place`); (c) dictate without touching, press X: everything typed
+   is removed.
+4. **Auto-learn**: after a dictation fix a word by hand; within ~60 s a toast offers the pair.
+5. **Names around the cursor** (Advanced, `window_context_vocabulary`): a name visible in the
    field comes out spelled right.
-5. **Silence stop**: 60 s of silence stops the recording.
-6. **Password fields** must never be read (`is_secure` → `CurrentIsPassword`).
+6. **Silence stop**: 60 s of silence stops the recording.
+7. **Password fields** must never be read (`is_secure` → `CurrentIsPassword`).
 
 Logs: Settings has an "open log directory" button; live typing logs why it did not start
 (role, unverified field, copied fallback). Ask the user to paste them.
@@ -88,6 +105,12 @@ Logs: Settings has an "open log directory" button; live typing logs why it did n
   moving `TextUnit_Character` from the caret and trimmed to exact UTF-16 counts
   (`text_before_cursor`, `text_after_cursor`). `selected_range().location` is capped at 10_000
   units and only `length` is relied on. Watch CRLF in Notepad/Word (may count as one unit).
+- **Selection not replaced / replaced in the wrong place** → the selection logic relies on
+  `selected_range().length > 0` and on `text_before_cursor` / `text_near_cursor` measuring from
+  the selection *start* (`collapsed_at_cursor`). macOS does; check UIA does too.
+  `seal_on_selection` calls `selected_range()` on every commit, and on UIA that walks up to
+  10_000 units of document prefix: if live typing lags in long documents, read only the
+  selection length there (the location is not needed for this check).
 - **Hangs** → UIA timeouts: 200 ms connection / 500 ms transaction via `IUIAutomation2`.
 - **Elevated apps** (run as admin) can't be read or typed into unless Handy is elevated too.
 - **Threading** → UIA calls must stay off the Tauri main thread (they run on the live typer,
