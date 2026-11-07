@@ -1,7 +1,7 @@
 //! Names and terms visible around the cursor in the focused app, read when a
 //! dictation starts and sent to the model as extra vocabulary, so a name on
 //! screen comes out right the first time. Opt-in (`window_context_vocabulary`)
-//! and macOS only: elsewhere the Accessibility read finds no field.
+//! and macOS/Windows only: elsewhere the Accessibility read finds no field.
 //!
 //! Only the focused field is read, not the window title or other elements:
 //! titles are Title Case app chrome ("Untitled Document — Edited") that the

@@ -16,8 +16,8 @@ export const AutoLearn: React.FC<AutoLearnProps> = React.memo(
     const osType = useOsType();
     const enabled = getSetting("auto_learn_enabled") ?? false;
 
-    // Reads the focused field through the macOS Accessibility API.
-    if (osType !== "macos") {
+    // Reads the focused field through Accessibility (macOS) or UI Automation (Windows).
+    if (osType !== "macos" && osType !== "windows") {
       return null;
     }
 

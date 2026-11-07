@@ -20,8 +20,8 @@ export const LiveTyping: React.FC<LiveTypingProps> = React.memo(
     const supportsStreaming =
       models.find((m) => m.id === currentModel)?.supports_streaming ?? false;
 
-    // Checks the field through the macOS Accessibility API; needs a streaming model.
-    if (osType !== "macos" || !supportsStreaming) {
+    // Checks the field through Accessibility (macOS) or UI Automation (Windows); needs a streaming model.
+    if ((osType !== "macos" && osType !== "windows") || !supportsStreaming) {
       return null;
     }
 

@@ -2,7 +2,7 @@
 //! short while and learn exact word replacements from the user's own fixes.
 //!
 //! `learn` and `upsert_learned` are pure and OS-agnostic; the watcher uses
-//! `crate::accessibility`, which is a no-op off macOS. Field text stays in
+//! `crate::accessibility`, a no-op off macOS/Windows. Field text stays in
 //! memory only: only the learned pair is persisted.
 
 use crate::accessibility;

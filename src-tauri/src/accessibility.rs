@@ -1,6 +1,7 @@
 //! Read-only access to the focused text field through the macOS Accessibility
-//! (AX) API, for auto-learn and live typing. Uses the Accessibility permission
-//! Handy already requests. Other platforms get no-op stubs with the same API.
+//! (AX) API, or UI Automation on Windows (`accessibility_uia.rs`), for
+//! auto-learn and live typing. Uses the Accessibility permission Handy already
+//! requests. Other platforms get no-op stubs with the same API.
 //!
 //! AX offsets (`AXSelectedTextRange`, `AXStringForRange`) are UTF-16 code
 //! units: text is always handled as UTF-16 units, never byte-sliced.
@@ -42,7 +43,7 @@ pub fn wait_for_focused_field(
 ) -> (Option<FocusedField>, Duration) {
     const POLL: Duration = Duration::from_millis(50);
     let start = std::time::Instant::now();
-    if cfg!(not(target_os = "macos")) {
+    if cfg!(not(any(target_os = "macos", windows))) {
         return (None, Duration::ZERO);
     }
     loop {
@@ -301,11 +302,15 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+#[path = "accessibility_uia.rs"]
+mod imp;
+
+#[cfg(not(any(target_os = "macos", windows)))]
 mod imp {
     use super::Utf16Range;
 
-    /// Stub: Accessibility reads are macOS-only.
+    /// Stub: Accessibility reads are macOS and Windows only.
     #[derive(Clone)]
     pub struct FocusedField;
 
@@ -382,7 +387,7 @@ fn range_before(cursor: usize, max_utf16: usize) -> Utf16Range {
 
 /// Decodes UTF-16 read from an arbitrary range, dropping a surrogate half cut
 /// off at either edge so no pair is split into U+FFFD.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn decode_utf16_window(units: &[u16]) -> String {
     let is_high = |u: &u16| (0xD800..=0xDBFF).contains(u);
     let is_low = |u: &u16| (0xDC00..=0xDFFF).contains(u);

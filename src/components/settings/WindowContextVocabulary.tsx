@@ -15,8 +15,8 @@ export const WindowContextVocabulary: React.FC<WindowContextVocabularyProps> =
     const { getSetting, updateSetting, isUpdating } = useSettings();
     const osType = useOsType();
 
-    // Reads the focused field through the macOS Accessibility API.
-    if (osType !== "macos") {
+    // Reads the focused field through Accessibility (macOS) or UI Automation (Windows).
+    if (osType !== "macos" && osType !== "windows") {
       return null;
     }
 

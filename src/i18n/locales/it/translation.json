@@ -605,7 +605,7 @@
       },
       "autoLearn": {
         "title": "Apprendi dalle correzioni",
-        "description": "Per circa 60 secondi dopo un dettato, osserva il campo in cui hai scritto e impara coppie esatte di parole dalle correzioni che fai a mano. Le coppie imparate compaiono in Sostituzioni di parole. Solo macOS; non legge mai i campi password."
+        "description": "Per circa 60 secondi dopo un dettato, osserva il campo in cui hai scritto e impara coppie esatte di parole dalle correzioni che fai a mano. Le coppie imparate compaiono in Sostituzioni di parole. Solo macOS e Windows; non legge mai i campi password."
       },
       "autoLearnLlmFilter": {
         "title": "Filter learned words with AI",
@@ -613,7 +613,7 @@
       },
       "windowContextVocabulary": {
         "title": "Usa i nomi sullo schermo",
-        "description": "All'avvio di una dettatura legge il testo intorno al cursore nel campo in cui stai scrivendo e passa al modello i nomi e i termini tecnici che trova, così vengono scritti giusti al primo colpo. Il testo resta su questo computer, serve solo per quella dettatura e non viene mai salvato. Aiuta solo i modelli che accettano un vocabolario, come Whisper. Solo macOS; non legge mai i campi password."
+        "description": "All'avvio di una dettatura legge il testo intorno al cursore nel campo in cui stai scrivendo e passa al modello i nomi e i termini tecnici che trova, così vengono scritti giusti al primo colpo. Il testo resta su questo computer, serve solo per quella dettatura e non viene mai salvato. Aiuta solo i modelli che accettano un vocabolario, come Whisper. Solo macOS e Windows; non legge mai i campi password."
       },
       "voiceActivityDetection": {
         "title": "Rilevamento dell'attività vocale",
@@ -657,7 +657,7 @@
       },
       "liveTyping": {
         "title": "Digitazione in tempo reale",
-        "description": "Il testo compare nel campo attivo mentre parli. Funziona solo con la scorciatoia in modalità toggle, con i modelli in streaming e con un Metodo di Incollaggio diverso da \"Nessuno\". Solo macOS."
+        "description": "Il testo compare nel campo attivo mentre parli. Funziona solo con la scorciatoia in modalità toggle, con i modelli in streaming e con un Metodo di Incollaggio diverso da \"Nessuno\". Solo macOS e Windows."
       }
     },
     "postProcessing": {
