@@ -6,7 +6,8 @@
 //! The user may edit the field or move the cursor while dictating. Before
 //! each delta the field is checked; on such a change the current [`Segment`]
 //! is sealed (never touched again) and the next words start a new one at the
-//! cursor. Only the last segment, if unedited, gets the final replace.
+//! cursor. Only the last segment, if unedited, gets the final replace. A
+//! selection seals the segment too, and the next words replace it.
 //!
 //! When the speaker pauses, the held-back words and the model's tentative ones
 //! are typed too, as the segment's tail; until they become stable they may be
@@ -293,6 +294,20 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
                 let _ = reply.send(outcome);
             }
             Cmd::SegmentStart(reply) => {
+                // A selection made after the last commit: the rest replaces it.
+                if let Some(s) = session.as_mut().filter(|s| s.active) {
+                    seal_on_selection(s);
+                    if let Some(p) = s.latest.clone() {
+                        let cleaned = post_process_transcription_text(
+                            p.raw,
+                            &s.settings,
+                            &[],
+                            &p.language,
+                            &p.languages,
+                        );
+                        s.segment.match_case(&cleaned, &s.settings.custom_words);
+                    }
+                }
                 let _ = reply.send(session.as_ref().map_or(0, |s| s.segment.start_words));
             }
             Cmd::Cancel => {
@@ -414,6 +429,10 @@ fn apply_edit(app: &AppHandle, s: &mut Session, edit: Delta, flush: bool) {
 /// of it when `flush`), after checking the field: a user edit or cursor move
 /// seals the segment first.
 fn segment_delta(s: &mut Session, cleaned: &str, flush: bool) -> Option<Delta> {
+    // Checked even with nothing to type, so only words spoken after the
+    // selection replace it.
+    seal_on_selection(s);
+    s.segment.match_case(cleaned, &s.settings.custom_words);
     let edit = match s.segment.plan(cleaned, flush) {
         Delta::Nothing => return None,
         Delta::Diverged => {
@@ -448,28 +467,56 @@ fn segment_delta(s: &mut Session, cleaned: &str, flush: bool) -> Option<Delta> {
             s.active = false;
             None
         }
-        // Typing would replace the user's selection: wait for the next commit.
+        // A sealed segment's first words replace the user's selection; the
+        // field read holds the selected text, so it can't track the typing.
+        FieldCheck::Selection if s.segment.typed.is_empty() => {
+            s.around = None;
+            Some(edit)
+        }
+        // Selected since the check above: the next commit seals.
         FieldCheck::Selection => None,
         FieldCheck::Edited => {
-            let around = s.target.text_near_cursor().map(split_at_cursor);
-            s.sealed.extend(edited_segment(
-                s.around.take(),
-                &s.segment.typed,
-                around.as_ref(),
-            ));
-            let (carry_tail, lead) = cursor_context(around.as_ref());
-            s.around = around;
-            let dropped = s.segment.seal(carry_tail, lead);
-            debug!(
-                "Live typing: field edited; new segment at the cursor from word {} ({dropped} pending words dropped)",
-                s.segment.start_words
-            );
+            seal_segment(s, true);
+            s.segment.match_case(cleaned, &s.settings.custom_words);
             match s.segment.plan(cleaned, flush) {
                 edit @ Delta::Append(_) => Some(edit),
                 _ => None,
             }
         }
     }
+}
+
+/// Seals the segment when the user selected text, so the words spoken next
+/// replace the selection. The held-back words were spoken before it: dropped.
+fn seal_on_selection(s: &mut Session) {
+    if s.poisoned
+        || s.segment.typed.is_empty()
+        || !s.target.selected_range().is_some_and(|r| r.length > 0)
+    {
+        return;
+    }
+    if verify_field(&s.target, &s.segment.typed) == FieldCheck::Selection {
+        seal_segment(s, false);
+    }
+}
+
+/// Seals the segment after a user edit or selection; the next words start a
+/// new one at the cursor. `may_carry`: the pending tail may move to it.
+fn seal_segment(s: &mut Session, may_carry: bool) {
+    let around = s.target.text_near_cursor().map(split_at_cursor);
+    s.sealed.extend(edited_segment(
+        s.around.take(),
+        &s.segment.typed,
+        around.as_ref(),
+    ));
+    let (carry_tail, lead) = cursor_context(around.as_ref());
+    s.around = around;
+    let dropped = s.segment.seal(may_carry && carry_tail, lead);
+    s.segment.field_case = field_case(s.around.as_ref());
+    debug!(
+        "Live typing: field edited or selected; new segment at the cursor from word {} ({dropped} pending words dropped)",
+        s.segment.start_words
+    );
 }
 
 fn finish_session(app: &AppHandle, mut s: Session, final_text: &str, raw_text: &str) -> Finish {
@@ -559,12 +606,12 @@ fn finish_copy_only(app: &AppHandle, mut s: Session, final_text: &str, copy: &st
     let check = (!s.poisoned).then(|| verify_field(&s.target, &seg.typed));
     let mut inserted = String::new();
     match check {
-        Some(FieldCheck::Verified) => {
+        Some(check @ (FieldCheck::Verified | FieldCheck::Selection)) => {
             inserted = seg.typed.clone();
             if let FinishStep::Type {
                 backspaces: 0,
                 insert,
-            } = plan_segment_finish(FieldCheck::Verified, &seg.typed, &text, String::new())
+            } = plan_segment_finish(check, &seg.typed, &text, String::new())
             {
                 if !insert.is_empty() && type_on_main(app, 0, &insert).is_ok() {
                     inserted.push_str(&insert);
@@ -609,10 +656,16 @@ fn finish_like_paste(app: &AppHandle, settings: &AppSettings, text: String) {
     }
 }
 
-/// Removes the live segment only: sealed ones hold the user's edits.
+/// Removes what was typed, unless the user edited, selected or moved the
+/// cursor in the field while dictating (a sealed segment): their changes and
+/// the text around them stay.
 fn cancel_session(app: &AppHandle, s: Session) {
     let typed = &s.segment.typed;
     if typed.is_empty() {
+        return;
+    }
+    if s.segment.start_words > 0 {
+        debug!("Live typing cancelled: the field was edited, left the typed text in place");
         return;
     }
     let count = typed.chars().count();
@@ -638,7 +691,8 @@ enum FieldCheck {
     Verified,
     /// Focus left the target field.
     Moved,
-    /// The user selected text in the target: typing would replace it.
+    /// The user selected text in the target: typing replaces it, so only a
+    /// segment that typed nothing yet types over it.
     Selection,
     /// The target was read and never held `typed` right before the cursor:
     /// the user edited it or moved the cursor.
@@ -862,6 +916,20 @@ struct Segment {
     tail: usize,
     /// Words in the cleaned text at the last commit.
     seen_words: usize,
+    /// The case the field wants for the first word at the cursor (a sealed
+    /// segment only): lower mid-sentence, upper at a sentence start.
+    field_case: Case,
+    /// The case its first word gets, decided by [`Self::match_case`].
+    case: Case,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Case {
+    /// As the model wrote it.
+    #[default]
+    Keep,
+    Lower,
+    Upper,
 }
 
 impl Segment {
@@ -918,7 +986,39 @@ impl Segment {
     }
 
     fn with_lead(&self, text: &str) -> String {
-        with_lead(self.lead, text)
+        let text = with_lead(self.lead, text);
+        match self.case {
+            Case::Keep => text,
+            Case::Lower => decapitalize(&text),
+            Case::Upper => capitalize(&text),
+        }
+    }
+
+    /// Decides [`Self::case`] from `cleaned` until the segment has typed
+    /// anything: after that, its text must stay as typed. A sentence start in
+    /// the field is always capitalized. Mid-sentence, only a capital the model
+    /// wrote after a sentence break (say, a pause to select) is lowered, and
+    /// words in `custom_words` (names, mostly) keep it.
+    fn match_case(&mut self, cleaned: &str, custom_words: &[String]) {
+        if self.typed.is_empty() {
+            let first = skip_words(cleaned, self.start_words)
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c: char| !c.is_alphanumeric());
+            let custom = custom_words.iter().any(|w| {
+                w.split_whitespace()
+                    .next()
+                    .is_some_and(|w| w.to_lowercase() == first.to_lowercase())
+            });
+            self.case = match self.field_case {
+                Case::Lower if sentence_break_before(cleaned, self.start_words) && !custom => {
+                    Case::Lower
+                }
+                Case::Upper => Case::Upper,
+                _ => Case::Keep,
+            };
+        }
     }
 
     /// Seals this segment and starts the next at the cursor, `lead` apart from
@@ -938,8 +1038,57 @@ impl Segment {
             typed: String::new(),
             tail: 0,
             seen_words: self.seen_words,
+            ..Default::default()
         };
         next - typed_end
+    }
+}
+
+/// Word `n` of `cleaned` follows sentence-ending punctuation.
+fn sentence_break_before(cleaned: &str, n: usize) -> bool {
+    n > 0
+        && cleaned[..word_offset(cleaned, n)]
+            .trim_end()
+            .ends_with(['.', '!', '?', '…'])
+}
+
+/// The case the field wants at the cursor: upper at the start of the field,
+/// a line or a sentence; lower mid-sentence; unknown when unreadable.
+fn field_case(around: Option<&Around>) -> Case {
+    let Some((before, _)) = around else {
+        return Case::Keep;
+    };
+    match before.trim_end_matches([' ', '\t']).chars().next_back() {
+        None | Some('.' | '!' | '?' | '…' | '\n' | '\r' | '\u{2028}' | '\u{2029}') => Case::Upper,
+        Some(_) => Case::Lower,
+    }
+}
+
+/// Uppercases the first letter of `text`.
+fn capitalize(text: &str) -> String {
+    let start = text.len() - text.trim_start().len();
+    match text[start..].chars().next() {
+        Some(first) if first.is_lowercase() => {
+            let rest = &text[start + first.len_utf8()..];
+            format!("{}{}{rest}", &text[..start], first.to_uppercase())
+        }
+        _ => text.to_string(),
+    }
+}
+
+/// Lowercases the first word of `text` when it is plainly capitalized
+/// ("Che", "È", not "CI", "GitHub" or English "I", "I'm").
+fn decapitalize(text: &str) -> String {
+    let start = text.len() - text.trim_start().len();
+    let word = text[start..].split_whitespace().next().unwrap_or("");
+    let english_i = word == "I" || word.starts_with("I'") || word.starts_with("I\u{2019}");
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) if first.is_uppercase() && !english_i && !chars.any(char::is_uppercase) => {
+            let rest = &text[start + first.len_utf8()..];
+            format!("{}{}{rest}", &text[..start], first.to_lowercase())
+        }
+        _ => text.to_string(),
     }
 }
 
@@ -1046,6 +1195,13 @@ fn plan_segment_finish(
     let plan = plan_finish(typed, text);
     match (check, plan) {
         (FieldCheck::Verified | FieldCheck::Unreadable, FinishPlan::TypeRest(rest)) => {
+            FinishStep::Type {
+                backspaces: 0,
+                insert: rest,
+            }
+        }
+        // A segment sealed on a selection: its words replace the selection.
+        (FieldCheck::Selection, FinishPlan::TypeRest(rest)) if typed.is_empty() => {
             FinishStep::Type {
                 backspaces: 0,
                 insert: rest,
@@ -1394,6 +1550,66 @@ mod tests {
     }
 
     #[test]
+    fn words_after_a_mid_sentence_seal_drop_the_models_capital() {
+        let mut seg = Segment::default();
+        typed_through(&mut seg, &["Ho comprato il pane e il latte oggi"]);
+        // The user selected "latte" and paused: the model closed the sentence.
+        seg.seal(false, "");
+        seg.field_case = field_case(Some(&("Ho comprato il pane e il ".into(), "latte".into())));
+        assert_eq!(seg.field_case, Case::Lower);
+        let cleaned = "Ho comprato il pane e il latte oggi. Burro e marmellata stamattina";
+        seg.match_case(cleaned, &[]);
+        assert_eq!(seg.case, Case::Lower);
+        assert_eq!(seg.with_lead(" Burro e"), "burro e");
+        // A custom word (a name) keeps its capital.
+        let mut named = seg.clone();
+        named.match_case("oggi. Handy app ok ok", &["Handy".into()]);
+        assert_eq!(named.case, Case::Keep);
+        // Once something is typed the choice stays, so the text never diverges.
+        seg.apply(Delta::Append("burro".into()), false);
+        seg.match_case("oggi Burro e marmellata", &[]);
+        assert_eq!(seg.case, Case::Lower);
+        // No sentence break in the transcript: a capital there is a name.
+        let mut fresh = Segment {
+            field_case: Case::Lower,
+            start_words: 2,
+            ..Default::default()
+        };
+        fresh.match_case("send it Rob please now", &[]);
+        assert_eq!(fresh.case, Case::Keep);
+        // At a sentence start the model's lowercase continuation is raised.
+        let mut start = Segment {
+            field_case: Case::Upper,
+            start_words: 2,
+            ..Default::default()
+        };
+        start.match_case("send it poi domani", &[]);
+        assert_eq!(start.case, Case::Upper);
+        assert_eq!(start.with_lead("poi domani"), "Poi domani");
+    }
+
+    #[test]
+    fn case_helpers() {
+        let around = |b: &str| Some((b.to_string(), String::new()));
+        assert_eq!(field_case(around("il ").as_ref()), Case::Lower);
+        assert_eq!(field_case(around("fine. ").as_ref()), Case::Upper);
+        assert_eq!(field_case(around("riga\n").as_ref()), Case::Upper);
+        assert_eq!(field_case(around("").as_ref()), Case::Upper);
+        assert_eq!(field_case(None), Case::Keep);
+        assert_eq!(capitalize(" èccolo qui"), " Èccolo qui");
+        assert_eq!(capitalize("GitHub"), "GitHub");
+        assert!(sentence_break_before("a b. C", 2));
+        assert!(!sentence_break_before("a b C", 2));
+        assert!(!sentence_break_before("A b", 0));
+        assert_eq!(decapitalize(" Che bello"), " che bello");
+        assert_eq!(decapitalize("È vero"), "è vero");
+        assert_eq!(decapitalize("A presto"), "a presto");
+        for keep in ["I think", "I'm here", "CI pipeline", "GitHub", ""] {
+            assert_eq!(decapitalize(keep), keep);
+        }
+    }
+
+    #[test]
     fn cursor_context_reads_lead_and_end() {
         assert_eq!(cursor_context(None), (false, ""));
         assert_eq!(ctx("", 0), (true, ""));
@@ -1464,6 +1680,14 @@ mod tests {
                 FinishStep::Copy
             );
         }
+        // A segment sealed on a selection types its words over it.
+        assert_eq!(
+            plan_segment_finish(FieldCheck::Selection, "", "Rob", String::new()),
+            FinishStep::Type {
+                backspaces: 0,
+                insert: "Rob".into()
+            }
+        );
         // A new segment that typed nothing yet gets its whole final text.
         assert_eq!(
             plan_segment_finish(FieldCheck::Verified, "", " Call Anna.", String::new()),
