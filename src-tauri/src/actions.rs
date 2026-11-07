@@ -890,10 +890,21 @@ impl ShortcutAction for TranscribeAction {
                                 return;
                             };
 
+                            // Without Post Process the field already holds what was
+                            // said: leave the user's hand edits alone, copy the text.
+                            let copy_only = (!post_process).then(|| {
+                                if sealed_text.is_empty() {
+                                    final_text.clone()
+                                } else {
+                                    format!("{sealed_text} {final_text}")
+                                }
+                            });
                             // Off the main thread: the typer types through it.
-                            let live = ah
-                                .state::<LiveTyper>()
-                                .finish(final_text.clone(), live_text);
+                            let live = ah.state::<LiveTyper>().finish(
+                                final_text.clone(),
+                                live_text,
+                                copy_only,
+                            );
                             if live == Finish::Copied {
                                 notices::raise(
                                     &ah,

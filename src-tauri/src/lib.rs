@@ -631,7 +631,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
                 Ok(out) => {
                     if let Some(typer) = &typer {
                         let (_, live) = live_typing::split_at_word(&out, typer.segment_start());
-                        let finish = typer.finish(live.to_string(), live.to_string());
+                        let finish = typer.finish(live.to_string(), live.to_string(), None);
                         eprintln!("live typing: {finish:?}");
                         let watch_secs = args.live_type.unwrap_or(0);
                         if let live_typing::Finish::Handled(inserted, edited) = finish {

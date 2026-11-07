@@ -12,7 +12,7 @@
 //! are typed too, as the segment's tail; until they become stable they may be
 //! revised, with the same verified delete.
 //!
-//! Without an Accessibility target (non-macOS, unreadable field) no session
+//! Without an Accessibility target (Linux, unreadable field) no session
 //! starts and the caller does the normal paste.
 
 use crate::accessibility::{self, FocusedField, Utf16Range};
@@ -59,6 +59,7 @@ enum Cmd {
     Finish {
         text: String,
         raw: String,
+        copy_only: Option<String>,
         reply: mpsc::Sender<Finish>,
     },
     SegmentStart(mpsc::Sender<usize>),
@@ -151,13 +152,20 @@ impl LiveTyper {
     }
 
     /// Delivers the live segment's final text, and `raw`, the same text before
-    /// Post Process, typed instead when the user edited the segment. Blocks
-    /// until the typer is done, so it must not run on the main thread (the
-    /// typer types through it).
-    pub fn finish(&self, text: String, raw: String) -> Finish {
+    /// Post Process, typed instead when the user edited the segment. With
+    /// `copy_only`, typed text is never rewritten (only a missing tail is
+    /// appended to an untouched field) and that text goes to the clipboard. Blocks until the typer is done, so it must not run
+    /// on the main thread (the typer types through it).
+    pub fn finish(&self, text: String, raw: String, copy_only: Option<String>) -> Finish {
         self.current.store(0, Ordering::Release);
         let (reply, rx) = mpsc::channel();
-        if self.tx.send(Cmd::Finish { text, raw, reply }).is_err() {
+        let cmd = Cmd::Finish {
+            text,
+            raw,
+            copy_only,
+            reply,
+        };
+        if self.tx.send(cmd).is_err() {
             return Finish::Fallback;
         }
         rx.recv().unwrap_or(Finish::Fallback)
@@ -269,9 +277,17 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
                     type_committed(&app, s, text, &language, &languages);
                 }
             }
-            Cmd::Finish { text, raw, reply } => {
+            Cmd::Finish {
+                text,
+                raw,
+                copy_only,
+                reply,
+            } => {
                 let outcome = match session.take() {
-                    Some(s) => finish_session(&app, s, &text, &raw),
+                    Some(s) => match copy_only {
+                        Some(copy) => finish_copy_only(&app, s, &text, &copy),
+                        None => finish_session(&app, s, &text, &raw),
+                    },
                     None => Finish::Fallback,
                 };
                 let _ = reply.send(outcome);
@@ -525,6 +541,54 @@ fn finish_session(app: &AppHandle, mut s: Session, final_text: &str, raw_text: &
         warn!("Live typing: clipboard fallback failed: {e}");
     }
     Finish::Copied
+}
+
+/// Never rewrites what is in the field and copies `copy`, the whole
+/// dictation, to the clipboard. The only change to the field: words still
+/// held back are appended when the field is exactly as live typing left it.
+fn finish_copy_only(app: &AppHandle, mut s: Session, final_text: &str, copy: &str) -> Finish {
+    let mut sealed = std::mem::take(&mut s.sealed);
+    let seg = &s.segment;
+    if seg.typed.is_empty() && seg.start_words == 0 {
+        return Finish::Fallback;
+    }
+    let mut text = seg.with_lead(final_text);
+    if s.settings.append_trailing_space && !text.is_empty() {
+        text.push(' ');
+    }
+    let check = (!s.poisoned).then(|| verify_field(&s.target, &seg.typed));
+    let mut inserted = String::new();
+    match check {
+        Some(FieldCheck::Verified) => {
+            inserted = seg.typed.clone();
+            if let FinishStep::Type {
+                backspaces: 0,
+                insert,
+            } = plan_segment_finish(FieldCheck::Verified, &seg.typed, &text, String::new())
+            {
+                if !insert.is_empty() && type_on_main(app, 0, &insert).is_ok() {
+                    inserted.push_str(&insert);
+                }
+            }
+        }
+        // Learned from like a sealed segment; the field stays as the user left it.
+        Some(FieldCheck::Edited) => {
+            let around = s.target.text_near_cursor().map(split_at_cursor);
+            sealed.extend(edited_segment(s.around.take(), &seg.typed, around.as_ref()));
+        }
+        _ => {}
+    }
+    if !copy.is_empty() {
+        let copy = copy.to_string();
+        if let Err(e) = on_main(app, move |app| write_text_to_clipboard(app, &copy)) {
+            warn!("Live typing: copy to clipboard failed: {e}");
+        }
+    }
+    debug!(
+        "Live typing finished without rewriting the field ({check:?}); {} chars copied",
+        copy.chars().count()
+    );
+    Finish::Handled(inserted, sealed)
 }
 
 /// The parts of `clipboard::paste` that follow the insertion.
