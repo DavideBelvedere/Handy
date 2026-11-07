@@ -19,6 +19,53 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// A recording with no speech for this long stops as if the shortcut were
+/// pressed again.
+const SILENCE_STOP: Duration = Duration::from_secs(60);
+
+/// Tracks the last speech of the current recording for [`SILENCE_STOP`].
+/// Speech is a frame that passed VAD: with VAD off every frame passes, so the
+/// stop never fires.
+struct SilenceWatch {
+    origin: Instant,
+    last_speech_ms: AtomicU64,
+    fired: AtomicBool,
+    binding_id: Mutex<String>,
+}
+
+impl SilenceWatch {
+    fn new() -> Self {
+        Self {
+            origin: Instant::now(),
+            last_speech_ms: AtomicU64::new(0),
+            fired: AtomicBool::new(true),
+            binding_id: Mutex::new(String::new()),
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.origin.elapsed().as_millis() as u64
+    }
+
+    fn start(&self, binding_id: &str) {
+        *self.binding_id.lock().unwrap() = binding_id.to_string();
+        self.heard_speech();
+        self.fired.store(false, Ordering::SeqCst);
+    }
+
+    fn heard_speech(&self) {
+        self.last_speech_ms.store(self.now_ms(), Ordering::Relaxed);
+    }
+
+    /// The binding to stop, once per recording, after `limit` without speech.
+    fn expired(&self, limit: Duration) -> Option<String> {
+        let silent = self
+            .now_ms()
+            .saturating_sub(self.last_speech_ms.load(Ordering::Relaxed));
+        (silent >= limit.as_millis() as u64 && !self.fired.swap(true, Ordering::SeqCst))
+            .then(|| self.binding_id.lock().unwrap().clone())
+    }
+}
 const SILERO_VAD_THRESHOLD: f32 = 0.3;
 const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
 
@@ -500,6 +547,8 @@ pub struct AudioRecordingManager {
     /// the main/webview thread when a worker holds `state` across a slow
     /// CoreAudio open/close.
     recording_active: Arc<AtomicBool>,
+    /// Stops a recording after [`SILENCE_STOP`] without speech.
+    silence: Arc<SilenceWatch>,
     /// Invalidates asynchronous first-sample UI/chime work when a recording is
     /// stopped or cancelled. This prevents a slow device from producing a late
     /// "ready" indication for a session the user already ended.
@@ -529,11 +578,35 @@ impl AudioRecordingManager {
             MicrophoneMode::OnDemand
         };
 
+        let silence = Arc::new(SilenceWatch::new());
+        let recording_active = Arc::new(AtomicBool::new(false));
+        // Levels arrive for every chunk, speech or not: the silence clock.
         let on_levels: LevelCallback = {
             let app_handle = app.clone();
-            Arc::new(move |levels| utils::emit_levels(&app_handle, &levels))
+            let silence = Arc::clone(&silence);
+            let recording_active = Arc::clone(&recording_active);
+            Arc::new(move |levels| {
+                utils::emit_levels(&app_handle, &levels);
+                if !recording_active.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Some(binding_id) = silence.expired(SILENCE_STOP) {
+                    info!("No speech for {SILENCE_STOP:?}: stopping the recording");
+                    crate::signal_handle::send_transcription_input(
+                        &app_handle,
+                        &binding_id,
+                        "silence_stop",
+                    );
+                }
+            })
         };
-        let on_audio: AudioFrameCallback = Arc::new(move |frame| stream_router.feed(frame));
+        let on_audio: AudioFrameCallback = {
+            let silence = Arc::clone(&silence);
+            Arc::new(move |frame| {
+                silence.heard_speech();
+                stream_router.feed(frame);
+            })
+        };
 
         let manager = Self {
             state: Arc::new(Mutex::new(RecordingState::Idle)),
@@ -551,7 +624,8 @@ impl AudioRecordingManager {
             mute_state: Arc::new(Mutex::new(MuteState::default())),
             close_generation: Arc::new(AtomicU64::new(0)),
             cancel_generation: Arc::new(AtomicU64::new(0)),
-            recording_active: Arc::new(AtomicBool::new(false)),
+            recording_active,
+            silence,
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
             last_input_silent: Arc::new(AtomicBool::new(false)),
@@ -1078,6 +1152,7 @@ impl AudioRecordingManager {
             match microphone.recorder.start(sink) {
                 Ok(()) => {
                     let generation = self.capture_generation.fetch_add(1, Ordering::AcqRel) + 1;
+                    self.silence.start(binding_id);
                     *self.is_recording.lock().unwrap() = true;
                     self.set_state(
                         &mut state,
@@ -1360,6 +1435,18 @@ impl AudioRecordingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn silence_watch_fires_once_per_recording_and_only_after_the_limit() {
+        let watch = SilenceWatch::new();
+        assert_eq!(watch.expired(Duration::ZERO), None, "no recording yet");
+        watch.start("transcribe");
+        assert_eq!(watch.expired(Duration::from_secs(60)), None);
+        assert_eq!(watch.expired(Duration::ZERO).as_deref(), Some("transcribe"));
+        assert_eq!(watch.expired(Duration::ZERO), None, "fires once");
+        watch.start("transcribe");
+        assert!(watch.expired(Duration::ZERO).is_some(), "re-armed by start");
+    }
 
     /// A recorder error, without touching a device: the request is rejected
     /// before one is opened.
