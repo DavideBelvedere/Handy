@@ -1,0 +1,90 @@
+name: "Windows Portable Build"
+
+# Unsigned Windows x64 build of this fork, packaged as a zip that runs
+# without installing. No `portable` marker inside: it uses the same
+# %APPDATA%\com.pais.handy data as an installed Handy (settings, models,
+# history). Windows steps mirror build.yml, minus signing and bundling.
+on:
+  push:
+    branches: [feat/auto-learn-live-typing-backtrack]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Enable long paths
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows-portable-v1
+          cache-bin: false
+
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      - name: Install SPIRV-Headers for the transcribe-cpp Vulkan build
+        shell: pwsh
+        run: |
+          vcpkg install spirv-headers:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install spirv-headers failed" }
+          $prefix = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" -replace '\\','/'
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$prefix"
+
+      # build.rs copies these into transcribe-libs/ so the zip runs on a PC
+      # without the VC++ redistributable installed.
+      - name: Locate VC++ runtime redist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $version = (Get-Content "$vsRoot\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt").Trim()
+          $archDir = "$vsRoot\VC\Redist\MSVC\$version\x64"
+          $crt = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.CRT" | Sort-Object Name | Select-Object -Last 1
+          $omp = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.OpenMP" | Sort-Object Name | Select-Object -Last 1
+          Add-Content $env:GITHUB_ENV "HANDY_VC_REDIST_DIRS=$($crt.FullName);$($omp.FullName)"
+
+      - run: bun install
+
+      - name: Build release exe
+        run: bun run tauri build --no-bundle
+
+      # Same layout the installer produces (tauri.windows.conf.json):
+      # transcribe-libs/* next to the exe, resources/ beside it.
+      - name: Assemble portable folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = "Handy-portable"
+          New-Item -ItemType Directory $out | Out-Null
+          Copy-Item src-tauri\target\release\handy.exe $out
+          Copy-Item src-tauri\transcribe-libs\* $out -Recurse
+          Copy-Item src-tauri\resources "$out\resources" -Recurse
+          # The fork must not offer upstream's update over itself.
+          Set-Content "$out\Handy-fork.cmd" "@echo off`r`nset HANDY_DISABLE_UPDATER=1`r`nstart `"`" `"%~dp0handy.exe`"" -Encoding ascii
+          Get-ChildItem $out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Handy-portable-windows-x64
+          path: Handy-portable
+          retention-days: 30
+
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test --release --lib
