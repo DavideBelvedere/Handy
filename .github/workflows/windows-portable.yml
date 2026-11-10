@@ -31,6 +31,7 @@ jobs:
           workspaces: "./src-tauri -> target"
           key: windows-portable-v1
           cache-bin: false
+          cache-on-failure: true
 
       - name: Install Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.2
@@ -61,8 +62,22 @@ jobs:
 
       - run: bun install
 
+      # Compiler errors are re-emitted as annotations: unlike job logs, they
+      # are readable without signing in to GitHub.
       - name: Build release exe
-        run: bun run tauri build --no-bundle
+        shell: pwsh
+        run: |
+          bun run tauri build --no-bundle 2>&1 | Tee-Object build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $blocks = (Get-Content build.log -Raw) -replace "`r", '' -split "`n\s*`n" |
+              Where-Object { $_ -match '(?m)^\s*error' } | Select-Object -First 10
+            foreach ($b in $blocks) {
+              $msg = $b.Trim() -replace '%', '%25' -replace "`n", '%0A'
+              Write-Output "::error title=build::$msg"
+            }
+            exit $code
+          }
 
       # Same layout the installer produces (tauri.windows.conf.json):
       # transcribe-libs/* next to the exe, resources/ beside it.
