@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { notify } from "@/stores/noticeStore";
 import type { WordReplacement } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { Input } from "../ui/Input";
@@ -36,11 +36,12 @@ export const WordReplacements: React.FC<WordReplacementsProps> = React.memo(
           (r) => r.from.toLowerCase() === trimmedFrom.toLowerCase(),
         )
       ) {
-        toast.error(
-          t("settings.advanced.wordReplacements.duplicate", {
+        notify({
+          title: t("settings.advanced.wordReplacements.duplicate", {
             word: trimmedFrom,
           }),
-        );
+          level: "warning",
+        });
         return;
       }
       const next: WordReplacement = {
