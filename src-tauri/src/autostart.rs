@@ -26,6 +26,17 @@ pub fn apply_autostart(app: &AppHandle, enabled: bool) {
         return;
     }
 
+    // A portable build is unsigned: Defender flags an unsigned exe that writes
+    // itself into the Run key (Behavior:Win32/SuspiciousFileInRunKey) and then
+    // blocks that binary for good. Start it from the Startup folder instead.
+    #[cfg(windows)]
+    let enabled = if enabled && crate::portable::is_portable() {
+        log::warn!("Autostart ignored in portable mode: use a Startup-folder shortcut");
+        false
+    } else {
+        enabled
+    };
+
     let manager = app.autolaunch();
     let result = if enabled {
         manager.enable()
