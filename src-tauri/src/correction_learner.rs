@@ -493,7 +493,9 @@ pub fn spawn_correction_watcher(
         // Typed (non-clipboard) pastes may land after `paste` returns, and
         // Chrome/Electron build their AX tree only after AXManualAccessibility.
         let baseline_deadline = Instant::now() + BASELINE_TIMEOUT;
-        let (field, before) = loop {
+        // None: the inserted text is not in the field (edited mid-dictation,
+        // or unreadable). Fixes made while dictating are still learned below.
+        let baseline = loop {
             std::thread::sleep(SETTLE_DELAY);
             if cancelled() {
                 return;
@@ -507,21 +509,30 @@ pub fn spawn_correction_watcher(
                     .value()
                     .filter(|v| needle.is_empty() || fold_typography(v).contains(&needle))
                 {
-                    break (f, v);
+                    break Some((f, v));
                 }
             } else {
                 // A Chrome/Electron app with its AX tree off has no focused element yet.
                 accessibility::enable_manual_accessibility_for_focused_app();
             }
             if Instant::now() >= baseline_deadline {
-                debug!("Auto-learn: inserted text not found in focused field");
-                return;
+                debug!(
+                    "Auto-learn: inserted text not found in focused field; {} segment(s) edited while dictating",
+                    edited.len()
+                );
+                if edited.is_empty() {
+                    return;
+                }
+                break None;
             }
         };
 
+        let (before, mut last) = match &baseline {
+            Some((_, v)) => (v.clone(), v.clone()),
+            None => (String::new(), String::new()),
+        };
         let deadline = Instant::now() + WATCH_WINDOW;
-        let mut last = before.clone();
-        while Instant::now() < deadline {
+        while let Some((field, _)) = baseline.as_ref().filter(|_| Instant::now() < deadline) {
             std::thread::sleep(POLL_INTERVAL);
             if cancelled() {
                 break;
@@ -535,7 +546,7 @@ pub fn spawn_correction_watcher(
                 last = v;
             }
             match accessibility::focused_field() {
-                Some(f) if f.same_as(&field) => {}
+                Some(f) if f.same_as(field) => {}
                 _ => break,
             }
         }
@@ -552,8 +563,9 @@ pub fn spawn_correction_watcher(
         }
         if outcome == LearnOutcome::default() {
             debug!(
-                "Auto-learn: no correction to learn (field changed: {})",
-                last != before
+                "Auto-learn: no correction to learn (field changed: {}, {} segment(s) edited while dictating)",
+                last != before,
+                edited.len()
             );
         }
         let mut pairs = outcome.pairs;

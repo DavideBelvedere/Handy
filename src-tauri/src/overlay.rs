@@ -75,9 +75,22 @@ fn notice_state(session_is_live: bool) -> &'static str {
     }
 }
 
+/// Live typing writes into the field, so the streaming overlay shows only the
+/// compact pill. The window shrinks with it: on Windows its transparent part
+/// still takes the clicks meant for the field underneath.
+static LIVE_TYPING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_live_typing(app_handle: &AppHandle, live: bool) {
+    if LIVE_TYPING.swap(live, Ordering::SeqCst) != live
+        && OVERLAY_SESSION_LIVE.load(Ordering::SeqCst)
+    {
+        update_overlay_position(app_handle);
+    }
+}
+
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if is_live_state(state) {
+    if is_live_state(state) && !(state == "streaming" && LIVE_TYPING.load(Ordering::SeqCst)) {
         (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
     } else {
         (OVERLAY_WIDTH, OVERLAY_HEIGHT)

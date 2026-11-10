@@ -326,6 +326,7 @@ fn run(app: AppHandle, rx: mpsc::Receiver<Cmd>) {
 /// then shows no transcript of its own.
 fn show_live_in_overlay(app: &AppHandle, live: bool) {
     let _ = app.emit_to("recording_overlay", "live-typing", live);
+    crate::overlay::set_live_typing(app, live);
 }
 
 /// After a pause, types what is still held back (the stable prefix's last
